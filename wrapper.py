@@ -85,10 +85,10 @@ def make_csv(path_to_archive, path_to_new_csv):
                     f"{path_to_archive}",  # path to ASN.1 from search_db()
                     "-outfmt"
                     "10",  # csv
-                    "sseqid",  # ID of contig containing hit
+                    "sseqid",  # contig ID
                     "sseq",  # aligned part of subject; the 'new orth seq'
-                    # length of this new ortholog?
-                    # compare to length of its contig?
+                    # length of sseq
+                    # length of the whole source contig
                     "qseqid",  # known cas13d that matched ('closest known')
                     "ppos",  # % similarity (% positives)
                     "pident",  # % identity
@@ -105,7 +105,6 @@ def make_csv(path_to_archive, path_to_new_csv):
 
 # descriptive header. Is there one already?
 # biosample/bioproject/genus/annotations/taxonomy information?
-
 
 def read_csv(path_to_csv):  # gets accession IDs
     with open(path_to_csv, encoding='utf8') as f:
@@ -193,6 +192,10 @@ def wrapper():
 
     contigs_name = db_name + "_hits"  # extracted contigs
     contigs_path = Path(hello.output, "in", contigs_name).with_suffix(".fa")
+
+    contigs_path = contigs_path.resolve()
+    (contigs_path.parent).mkdir(parents=True,
+                                exist_ok=True)  # make "in" directory, if DNE
 
     results_name = db_name + "_results"  # CRISPRFinder output
     results_path = Path(hello.output, results_name)
