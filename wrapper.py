@@ -1,8 +1,34 @@
-#!/Users/kianfaizi/miniconda3/bin/python
-# remove shebang before export
+"""Cellophane: a Python wrapper for identifying Cas protein orthologs.
 
-# this script is customized (hardcoded?) to match my andromeda setup and so
-# requires some care before use.
+This program searches prokaryotic/metagenomic DNA sequence data for
+new orthologs of known Cas proteins. It mainly serves as a wrapper to
+string together analysis and output from several different tools. It is written
+in Python 3.7.
+
+It accepts a single FASTA file, generates an indexed nucleotide BLASTDB,
+searches it for ORFs matching a protein query using TBLASTN, and then checks
+hits for the presence of DRs with CRISPRFinder. The results are tabulated in
+a CSV file.
+
+This script is not well-optimized. It will remain that way until I am able to
+further develop it. Combined with the somewhat Byzantine dependencies and setup
+required to make it run, it is probably not of great utility for anyone other
+than myself. But if it helps you somehow, then by all means, enjoy ;)
+"""
+
+import argparse
+import subprocess
+import sys
+import csv
+from pathlib import Path
+
+__author__ = "Kian Faizi"
+__copyright__ = "Copyright 2019, Kian Faizi"
+#  __license__ = null
+__version__ = "1.0"
+__maintainer__ = "Kian Faizi"
+__email__ = "kfaizi@ucsd.edu"
+__status__ = "Prototype"
 
 # in a/home directory, create blastdb/, genomes/, and output/.
 # crisprfinder, and the query file, etc should be in output/.
@@ -10,35 +36,45 @@
 # indexed dbs only should be in blastdb/.
 # the script will work from that assumption forwards.
 
-import argparse
-import subprocess
-import sys
-import csv
-import re
-import os
-from pathlib import Path
+# greeter = argparse.ArgumentParser(
+#     description='''For a given concatenated FASTA file, this script generates an
+#     indexed nucleotide BLASTDB, searches for similar seqs to a given query with
+#     TBLASTN, and searches those hits for DRs with CRISPRFinder. Results are
+#     tabulated in a CSV file.''')
+
+# greeter.add_argument("-i", "--input_fasta", help="Full path to the concatenated input .fasta file.", required=True)
+
+# greeter.add_argument("-db", "--database", help="Full path to the blastdb to be created.", required=True)
+
+# greeter.add_argument("-q", "--query", help="Full path to file with known protein sequences for BLAST search.", required=True)
+
+# greeter.add_argument("-s", "--script", help="Full path to CRISPRFinder script.", required=True)
+
+# greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", required=True)
+
+# greeter.add_argument("-o", "--output", help="Full path to output directory.", required=True)
+
+# # hello = greeter.parse_args()  # normal
+# hello = greeter.parse_args(['--input_fasta', '/Users/kianfaizi/dev/A_cat.fsa',
+#                             '--db', '/Users/kianfaizi/dev/out/A',
+#                             '--query', '/Users/kianfaizi/dev/Cas13d_proteins.fasta',
+#                             '--script', '/Users/kianfaizi/dev/cf_v2.pl',
+#                             '--threads', '4',
+#                             '--output', '/Users/kianfaizi/dev/out/'])
 
 
-greeter = argparse.ArgumentParser(
-    description='''For a given concatenated FASTA file, this script generates an
-    indexed nucleotide BLASTDB, searches for similar seqs to a given query with
-    TBLASTN, and searches those hits for DRs with CRISPRFinder. Results are
-    tabulated in a CSV file.''')
-
-greeter.add_argument("--input_fasta", help="Full path to the concatenated \
-                    input .fasta file.", required=True)
-greeter.add_argument("--db", help="Full path to the blastdb to be created.",
-                     required=True)
-greeter.add_argument("--query", help="Full path to file with known protein \
-                     sequences for BLAST search.", required=True)
-greeter.add_argument("--script", help="Full path to CRISPRFinder script.",
-                     required=True)
-greeter.add_argument("--threads", help="Number of threads for TBLASTN.",
-                     required=True)
-greeter.add_argument("--output", help="Full path to output directory.",
-                     required=True)
-
-hello = greeter.parse_args()
+# db_name = str((hello.db.split("/"))[-1])  # archive named in kind
+# query_name = str((hello.query.split("/"))[-1])
+# archive_path = Path(hello.output, db_name)
+# csv_path = Path(archive_path).with_suffix(".csv")
+# txt_name = db_name + "_acc"  # text file of ACCession numbers
+# txt_path = Path(hello.output, txt_name).with_suffix(".txt")
+# contigs_name = db_name + "_hits"  # extracted contigs
+# contigs_path = Path(hello.output, "in", contigs_name).with_suffix(".fa")
+# contigs_path = contigs_path.resolve()
+# (contigs_path.parent).mkdir(parents=True, exist_ok=True)  # make "in" directory, if DNE
+# results_name = db_name + "_results"  # CRISPRFinder output
+# results_path = Path(hello.output, results_name)
 
 # cat *.fsa_nt > new_file.fsa
 
@@ -83,21 +119,21 @@ def make_csv(path_to_archive, path_to_new_csv):
     subprocess.run(["blast_formatter",
                     "-archive",
                     f"{path_to_archive}",  # path to ASN.1 from search_db()
-                    "-outfmt"
-                    "10",  # csv
-                    "sseqid",  # contig ID
-                    "sseq",  # aligned part of subject; the 'new orth seq'
-                    # length of sseq
-                    # length of the whole source contig
-                    "qseqid",  # known cas13d that matched ('closest known')
-                    "ppos",  # % similarity (% positives)
-                    "pident",  # % identity
-                    "qseq",  # aligned part of query; from the known cas13d
-                    "sacc",  # accession of contig. Can I get bioproj/sample?
-                    "sscinames",  # scientific name for contig?
-                    "staxids",  # see above. need taxid db?
-                    "bitscore",
-                    "evalue",
+                    "-outfmt",
+                    # "10",  # csv
+                    "10 sseqid sseq qseqid ppos pident qseq sacc bitscore evalue",  # contig ID
+                    # "sseq",  # aligned part of subject; the 'new orth seq'
+                    # # length of sseq
+                    # # length of the whole source contig
+                    # "qseqid",  # known cas13d that matched ('closest known')
+                    # "ppos",  # % similarity (% positives)
+                    # "pident",  # % identity
+                    # "qseq",  # aligned part of query; from the known cas13d
+                    # "sacc",  # accession of contig. Can I get bioproj/sample?
+                    # "sscinames",  # scientific name for contig? ERROR
+                    # "staxids",  # see above. need taxid db? ERROR
+                    # "bitscore",
+                    # "evalue",
                     "-out",
                     f"{path_to_new_csv}"],
                    cwd="/",
@@ -106,28 +142,37 @@ def make_csv(path_to_archive, path_to_new_csv):
 # descriptive header. Is there one already?
 # biosample/bioproject/genus/annotations/taxonomy information?
 
+
 def read_csv(path_to_csv):  # gets accession IDs
-    with open(path_to_csv, encoding='utf8') as f:
+    with open(path_to_csv, encoding='utf8', newline='') as f:
         ID_finder = csv.reader(f)
         output_list = []  # to be list of IDs
-        next(ID_finder, None)  # skip the headers. Does this work w/ blast csv?
+        # next(ID_finder, None)  # skip the headers. Do not use for the blast csv since it has none -- apply later
         try:
-            for row in ID_finder:
-                output_list.append(row[0])  # make list of IDs
-            print("Working...", sum(1 for line in f), "IDs to parse")
-            print("Done...")
+            linecount = sum(1 for line in ID_finder)  # this iterates through the csv...
+            print("Working. There are", linecount, "contig IDs to parse...")
+            f.seek(0)  # ...so we need to move back to start
+            ID_finder = csv.reader(f)  # reset generator
+            for line in ID_finder:
+                output_list.append(line[0])  # make list of IDs
             return output_list
         except csv.Error as e:
-            sys.exit(f"file {path_to_csv}, line {reader.line_num}: {e}")
-
+            sys.exit(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
+        finally:
+            if len(output_list) != linecount:
+                print("Error: initial and final line counts do not match! Exiting")
+                sys.exit()
 
 def list_csv(path_to_csv, path_to_new_IDs):  # writes to .txt (creates if DNE)
-    with open(path_to_new_IDs, 'w+') as f:
-        output_list = read_csv()
-        print(f"Writing IDs to text file {path_to_new_IDs}...")
-        for ID in output_list:
-            f.write("{ID}\n")
-        print("Done...")
+    with open(path_to_new_IDs, 'w+', newline='') as f:
+        try:
+            output_list = read_csv(path_to_csv)
+            print(f"Writing IDs to text file {path_to_new_IDs}...")
+            for ID in output_list:
+                f.write(f"{ID}\n")
+            print("Done!")
+        except csv.Error as e:
+            sys.exit(f"Error writing accession data for {path_to_csv}: {e}")
 
 
 def extract_contigs(path_to_database, path_to_IDs, path_to_new_contigs):
@@ -167,10 +212,7 @@ def find_CRISPRs(path_to_crisprfinder, path_to_contigs, path_to_new_results):
     print("Results: \n" + "-"*7 + "\n" + p.stdout)
 
 
-def update_csv(path_to_csv, path_to_results):
-
-
-
+# def update_csv(path_to_csv, path_to_results):
 
 # using the initial input paths across all blocks, rather than feeding
 # returned output sequentially.
@@ -182,68 +224,54 @@ def update_csv(path_to_csv, path_to_results):
 
 def wrapper():
 
-    db_name = str((hello.db.split("/"))[-1])  # archive named in kind
-    query_name = str((hello.query.split("/"))[-1])
-    archive_path = Path(hello.output, db_name)
-    csv_path = Path(archive_path).with_suffix(".csv")
-
-    txt_name = db_name + "_acc"  # text file of ACCession numbers
-    txt_path = Path(hello.output, txt_name).with_suffix(".txt")
-
-    contigs_name = db_name + "_hits"  # extracted contigs
-    contigs_path = Path(hello.output, "in", contigs_name).with_suffix(".fa")
-
-    contigs_path = contigs_path.resolve()
-    (contigs_path.parent).mkdir(parents=True,
-                                exist_ok=True)  # make "in" directory, if DNE
-
-    results_name = db_name + "_results"  # CRISPRFinder output
-    results_path = Path(hello.output, results_name)
-
     try:  # making the blastdb
-        print(f"Making blastdb {db_name}...")
+        print(f"\nMaking blastdb {db_name}...")
         make_db(hello.input_fasta, hello.db)
         print(f"Success! Blast database created at {hello.db}")
     except subprocess.CalledProcessError as e:
         sys.exit(f"Error making blastdb {db_name}: {e}")
 
     try:  # blasting the blastdb
-        print(f"Blasting proteins in {query_name} against {db_name} with \
-              {hello.threads} threads...")
+        print(f"\nBlasting proteins in {query_name} against {db_name} with {hello.threads} threads...")
         search_db(hello.db, hello.query, archive_path, hello.threads)
         print(f"Success! Blast results written to {archive_path}")
     except subprocess.CalledProcessError as e:
         sys.exit(f"Error blasting {query_name} against blastdb {db_name}: {e}")
 
     try:  # creating a .csv from the results
-        print("Creating a .csv file from the blast results...")
+        print("\nCreating a .csv file from the blast results...")
         make_csv(archive_path, csv_path)
         print(f"Success! New .csv file created at {csv_path}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error creating .csv file from the archive \
-                 at {archive_path}: {e}")
+        sys.exit(f"Error creating .csv file from the archive at {archive_path}: {e}")
 
     try:  # make a list of accession IDs. Need to verify this step (csv format)
-        print("Extracting accession numbers from the .csv file...")
+        print("\nExtracting accession ID numbers from the .csv file...")
         list_csv(csv_path, txt_path)
         print(f"Success! Accession list created at {txt_path}")
     except Exception as e:
         sys.exit(f"Error creating accession list at {txt_path}: {e}")
 
     try:  # extract the corresponding contigs. TODO: ensure results are cat
-        print(f"Reading accession list at {txt_path} and extracting \
-              corresponding contigs from {hello.db}...")
+        print(f"\nReading accession list at {txt_path} and extracting corresponding contigs from {hello.db}...")
         extract_contigs(hello.db, txt_path, contigs_path)
         print(f"Success! Contigs extracted to {contigs_path}")
     except Exception as e:
         sys.exit(f"Error extracting contigs to {contigs_path}: {e}")
 
     try:  # search 'em with crisprfinder!
-        print(f"Almost there. Searching the sequences in {contigs_name} \
-              for DRs...")
+        print(f"\nAlmost there. Searching the sequences in {contigs_name} for DRs...")
         find_CRISPRs(hello.script, contigs_path, results_path)
         print(f"Success! CRISPRFinder output created at {results_path}")
     except subprocess.CalledProcessError as e:
         sys.exit(f"Error searching for DRs: {e}")
 
 # finally, update the csv
+
+# def checkpoint():
+#     try:
+#         # look for filetype a
+#     except Exception as e:
+#         # not a
+
+############### DEBUG #####################
