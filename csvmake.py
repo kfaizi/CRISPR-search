@@ -9,10 +9,12 @@ inputfile = "/Users/kianfaizi/temp/testAcsv.csv"
 def update_test():
     sections = "10 sseqid slen sstart send sseq length sframe qseqid ppos pident qseq bitscore evalue saccver"  # from blast_formatter
     sections_list = sections.split()
-    sections_list.pop(0)
+    sections_list.pop(0) # remove "10" (csv filetype specifier) from sections_list
 
+    # make blast csv into dataframe
     df_blast = pd.read_csv(inputfile, dtype=object, header=None, names=sections_list, index_col=None)
 
+    # make parsed crisprfinder results into dataframe
     d_crispr = parsed_dict['crisprs_list']
     df_crispr = pd.DataFrame(d_crispr, dtype=object, columns=['genomic_accession',
                                                               'crispr_id',
@@ -23,9 +25,12 @@ def update_test():
                                                               'dr_consensus_length',
                                                               'elements'], index=None)
 
-    combo = pd.merge(df_blast, df_crispr, how='left', left_on='saccver', right_on='genomic_accession')  # also handles multiple hits (from blast, CF, or both)
+    # make master dataframe. creates duplicates as needed to
+    # handle multiple hits from blast/crisprfinder/both
+    combo = pd.merge(df_blast, df_crispr, how='left', left_on='saccver', right_on='genomic_accession')
     combo = combo.drop(columns='genomic_accession')  # redundant; use crispr_id
 
+    # make new summary dataframe
     summary = combo[['sseq',
                      'qseqid',
                      'ppos',
@@ -37,9 +42,9 @@ def update_test():
                      'slen',
                      'start',
                      'end',
-                     'elements']]
+                     'elements']].copy()
 
-    # create columns w/ whether DR found (y/n). if yes, how many
+    # create columns w/ whether DR found (y/n) and if yes, how many
     dr_status = []
     dr_sum = []
 
@@ -47,6 +52,7 @@ def update_test():
         dr_count = 0
         dr_exists = 'no'
 
+        # if dr_consensus_seq is there, then DR was found
         if isinstance(eltup.dr_consensus_seq, str):
             dr_exists = 'yes'
 
@@ -62,11 +68,11 @@ def update_test():
 
         dr_sum.append(dr_count)
 
-    # add the columns
-    summary['DR_found'] = dr_status  # fix these to use df.loc.
-    summary['num_DRs'] = dr_sum  # then, fix dict formation. finally, fix csv appending.
+    # add columns to summary
+    summary.loc[:, 'DR_found'] = dr_status
+    summary.loc[:, 'num_DRs'] = dr_sum
 
-    # reorder for readability
+    # reorder columns for readability
     summary = summary[['sseq',
                        'qseqid',
                        'ppos',
@@ -93,13 +99,14 @@ def update_test():
                               'elements': 'array'},
                              axis=1)
 
-    # parse contigs for subsequent extraction
+    # parse contigs for subsequent extraction, without overloading memory
     record_dict = SeqIO.index('/Users/kianfaizi/dev/output/A/in/A_dedupe.fa', 'fasta')
 
     # extract up to +/- 20kb flanking sequence around crispr locus
-    tot = {}
+    extracted_list = []
 
     for row in summary.itertuples():
+        extracted_raw = None
         try:
             acc = row.crispr_id.split('_')[0]
             crispr_id = row.crispr_id
@@ -111,66 +118,27 @@ def update_test():
                 extracted_start = max(start-20000, 1)
                 extracted_end = min(end+20000, length)
                 extracted_len = extracted_end - extracted_start + 1
-                extracted_seq = (record_dict[acc].seq)[extracted_start-1: extracted_end]
+                extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
 
-                # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long.')
+                # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
+                extracted_raw = record_dict.get_raw(acc).decode()
+                extracted_name = crispr_id + "_extracted"
+                extracted_path = f"/Users/kianfaizi/dev/output/A/A_crisprs/{extracted_name}"  # update with Pathlib later
 
-                # add extracted sequence to summary dataframe...
-                tot[crispr_id] = extracted_seq.get_raw.decode()
-                print(tot)
-                # new_summary = insert(summary, len(summary.columns), 'flanking_sequence', extracted_seq)
+                # write extracted sequence to a new fasta file...
+                with open(extracted_path, 'w+') as outfile:
+                    SeqIO.write(extracted_seq, outfile, 'fasta')
 
-                # extracted_name = crispr_id + "_extracted"
-                # extracted_path = f"/Users/kianfaizi/dev/output/A/A_crisprs/{extracted_name}"  # update with Pathlib later
-
-                # extracted_record = SeqRecord(extracted_seq, )
-
-                # # ...and write it to a new fasta file
-                # with open(extracted_path, 'w+') as outfile:
-                #     SeqIO.write(extracted_seq, outfile, 'fasta')
+                print(f"Wrote extracted CRISPR locus to {extracted_path}")
 
         except Exception:
             pass
 
-    # with open('/Users/kianfaizi/temp/new_summary.csv', 'w') as f:
-    #     new_summary.to_csv(f, mode='w', index=True, header=True)
+        extracted_list.append(extracted_raw)
 
-update_test()
+    # ...and add it to the summary dataframe
+    summary.loc[:, 'extracted_sequence'] = extracted_list
 
-
-    # write to file
-    # extracted_path = '{}{}.fasta'.format(extracted_dir, extracted_id)
-    # with open(extracted_path, 'w') as outf:
-    #   SeqIO.write(extracted_record, outf, 'fasta')
-
-    # print(f'Wrote extracted crispr locus {crispr_id} to {extracted_path}')
-    # return extracted_id, extracted_start, extracted_end
-
-
-
-
-
-    # Less important: attempting to expand the elements dicts into new columns:
-    # df_elements = df_crispr[['crispr_id', 'elements']]
-    # df_expanded = pd.DataFrame()
-
-    # for eltup in df_elements.itertuples():
-    #     elements_count = len(eltup.elements)
-    #     ids_list = []
-
-    #     for i in range(elements_count):
-    #         elid = i + 1
-    #         ids_list.append(elid)
-
-    #     for el in eltup.elements:
-    #         idx = ids_list.pop(0)
-    #         el['element_id'] = eltup.crispr_id + f"-element{idx}"
-
-    #         df1 = pd.DataFrame.from_dict([el], dtype=object)
-    #         df_expanded = df_expanded.append(df1, sort=False, ignore_index=True)
-
-    # df_expanded = df_expanded[['element_id', 'element_type', 'start', 'end', 'spacer_name', 'spacer_seq']]  # reorganize columns
-
-    # just need to 'flatten'/pivot into rows for each CRISPR id
-    # dfnew = df_expanded.pivot_table(index='element_id', values=['element_type', 'start', 'end', 'spacer_name', 'spacer_seq'], fill_value=None, dropna=False).reset_index()
-    # print(dfnew)
+    # write summary dataframe to csv
+    with open('/Users/kianfaizi/temp/new_summary.csv', 'w') as f:
+        summary.to_csv(f, mode='w', index=True, header=True)
