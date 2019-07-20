@@ -1,4 +1,4 @@
-"""A Python (3) wrapper for identifying Cas protein orthologs.
+"""A Python (3.7) wrapper for identifying Cas protein orthologs.
 
 Searches prokaryotic/metagenomic DNA sequence data for
 new orthologs of known Cas proteins. Strings together
@@ -23,9 +23,10 @@ import argparse
 import subprocess
 import sys
 import csv
-# import pandas as pd
+import pandas as pd
 
 from pathlib import Path
+from itertools import groupby
 
 # in working directory with CF + query, create blastdb/ and genomes/.
 # genomes including cat fastas should be in genomes/.
@@ -95,6 +96,9 @@ accessions_path = Path(output_path, accessions_name).with_suffix(".txt")
 contigs_name = name + "_hits"
 contigs_path = Path(output_path, "in", contigs_name).with_suffix(".fa").resolve()
 (contigs_path.parent).mkdir(parents=True, exist_ok=True)
+
+dedupe_name = name + "_dedupe"
+dedupe_path = Path(contigs_path.parent, dedupe_name).with_suffix(".fa")
 
 results_name = name + "_crisprs"
 results_path = Path(output_path, results_name)
@@ -235,6 +239,22 @@ def extract_contigs(path_to_database, path_to_IDs, path_to_new_contigs):
                    check=True)
 
 
+def dedupe_contigs(path_to_contigs, path_to_new_contigs):
+    """Dedupe DNA fasta by sequence; from https://www.biostars.org/p/3003/."""
+    all_seqs = set()
+    with open(path_to_contigs, 'r') as infile:
+        with open(path_to_new_contigs, 'w+') as outfile:
+            head = None
+            for h, lines in groupby(infile, lambda x: x.startswith('>')):
+                if h:
+                    head = next(lines)
+                else:
+                    seq = ''.join(lines)
+                    if seq not in all_seqs:
+                        all_seqs.add(seq)
+                        outfile.write(f"{head}{seq}")
+
+
 def find_CRISPRs(path_to_crisprfinder, path_to_contigs, path_to_new_gff):
     """Search extracted contigs for DRs; retain output."""
     # make cwd same as CF's to prevent bug
@@ -369,9 +389,16 @@ def wrapper():
     except Exception as e:
         sys.exit(f"Error extracting contigs to {contigs_path}: {e}")
 
+    try:  # deduplicate the fasta
+        print(f"\nDeduplicating BLAST hits at {contigs_path}...")
+        dedupe_name(contigs_path, dedupe_path)
+        print(f"Success! Contigs deduplicated and moved to {dedupe_path}")
+    except Exception as e:
+        sys.exit(f"Error deduplicating contigs at {contigs_path}: {e}")
+
     try:  # search 'em with crisprfinder!
-        print(f"\nSearching sequences in {contigs_path} for DRs...")
-        find_CRISPRs(script_path, contigs_path, results_path)
+        print(f"\nSearching sequences in {dedupe_path} for DRs...")
+        find_CRISPRs(script_path, dedupe_path, results_path)
         print(f"Success! CRISPRFinder output created at {results_path}")
     except subprocess.CalledProcessError as e:
         sys.exit(f"Error searching for DRs: {e}")
