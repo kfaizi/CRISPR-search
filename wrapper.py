@@ -39,13 +39,13 @@ greeter = argparse.ArgumentParser(
     TBLASTN, and searches those hits for DRs with CRISPRFinder. Results are
     tabulated in a CSV file.''')
 
-greeter.add_argument("-i", "--input_name", help="Name/identifier of the input file.", required=True)
+greeter.add_argument("-in", "--input_name", help="Name/identifier of the input file.", required=True)
 
-greeter.add_argument("-w", "--working_dir", help="Path to working directory.", required=True)
+greeter.add_argument("-wdir", "--working_dir", help="Path to working directory.", required=True)
 
-greeter.add_argument("-b", "--blastdb_dir", help="Path to blastdb/.", required=True)
+greeter.add_argument("-bdir", "--blastdb_dir", help="Path to blastdb/.", required=True)
 
-greeter.add_argument("-g", "--genomes_dir", help="Path to genomes/.", required=True)
+greeter.add_argument("-gdir", "--genomes_dir", help="Path to genomes/.", required=True)
 
 greeter.add_argument("-q", "--query", help="Name of protein query file.", required=True)
 
@@ -53,17 +53,17 @@ greeter.add_argument("-s", "--script", help="Name of CRISPRFinder script file.",
 
 greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", required=True)
 
-## for interactivity, use: ##
-# hello = greeter.parse_args()
+######################## for interactivity, use: ###########################
+hello = greeter.parse_args()
 
-## for hardcoded testing, use: ##
-hello = greeter.parse_args(['-i', 'A',
-                            '-w', '/Users/kianfaizi/dev/',  # use pathlib to avoid / errors
-                            '-b', '/Users/kianfaizi/dev/blastdb/',  # use pathlib to avoid / errors
-                            '-g', '/Users/kianfaizi/dev/genomes/',  # use pathlib to avoid / errors
-                            '-q', 'Cas13d_proteins.fa',
-                            '-s', 'cf_v2.pl',
-                            '-t', '4'])
+######################## for hardcoded testing, use: ########################
+# hello = greeter.parse_args(['-i', 'A',
+#                             '-w', '/Users/kianfaizi/dev/',  # use pathlib to avoid / errors
+#                             '-b', '/Users/kianfaizi/dev/blastdb/',  # use pathlib to avoid / errors
+#                             '-g', '/Users/kianfaizi/dev/genomes/',  # use pathlib to avoid / errors
+#                             '-q', 'Cas13d_proteins.fa',
+#                             '-s', 'cf_v2.pl',
+#                             '-t', '4'])
 
 # make all pathlike args full paths (resolve "~/")
 working_path = Path(hello.working_dir).expanduser()
