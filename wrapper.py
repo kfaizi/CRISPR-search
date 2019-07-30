@@ -1,4 +1,6 @@
 #DB DIFF
+#to-do: add logging, add better help chatter in argparse, add argparse flexibility
+# eg, if extract not needed, jump ahead to next part.
 
 """A Python (3.7) wrapper for identifying Cas protein orthologs.
 
@@ -39,7 +41,7 @@ from Bio import SeqIO
 # indexed dbs should be in blastdb/.
 
 greeter = argparse.ArgumentParser(
-    description='''For a given concatenated FASTA file, this script generates an
+    description='''For a given directory of FASTA files, this script generates an
     indexed nucleotide BLASTDB, searches for similar seqs to a given query with
     TBLASTN, and searches those hits for DRs with CRISPRFinder. Results are
     tabulated in a CSV file.''')
@@ -93,15 +95,18 @@ blastdb_dir = Path(hello.blastdb_dir).expanduser()
 name = hello.input_name + "_" + NCBI_datestamp
 
 blastdb_path = Path(blastdb_dir, hello.input_name, name)
-# genomes_path = Path(genomes_dir, name)
+genomes_path = Path(genomes_dir, hello.input_name)
 query_path = sorted(working_path.glob(hello.query))[0]
 og_script_path = sorted(working_path.glob(hello.script))[0]
+
+gz_extractor_path = '~/cellophane/gz_extractor.sh'
+zip_path = Path(working_path, 'raw', hello.input_name)
 
 output_path = Path(working_path, "output", name)  # for each name
 output_path.mkdir(parents=True, exist_ok=True)  # make dirs incl parent
 script_path = Path(output_path, hello.script)
 
-genome_path = Path(genomes_dir, hello.input_name, name).with_suffix(".fa")
+genome_path = Path(genomes_path, name).with_suffix(".fa")
 
 archive_name = name + "_archive"
 archive_path = Path(output_path, archive_name)
@@ -155,14 +160,48 @@ def move_script(path_to_script, path_to_copy):
                    cwd="/",
                    check=True)
 
-# def unzip_fasta(path_to_zipped):
-#   """(G)unzip compressed fasta files."""
-#   # from '~/search/raw/foo/ to ~/search/genomes/foo/'
+
+def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
+    """(G)unzip compressed fasta files."""
+    subprocess.run(["bash",
+                    f"{path_to_gz_extractor}",
+                    f"{path_to_zipped}",
+                    f"{path_to_dest}"],
+                   cwd="/",
+                   check=True)
 
 
-# def cat_and_trim(path_to_fastas):
-#   """Concatenate unzipped fastas, delete source."""
-#   # in ~/search/genomes/foo/, delete all of type "wgs.*", keep the datestamp
+def cat_and_cut(path_to_fastas, path_to_cat):
+    """Concatenate unzipped fastas, delete source."""
+    cat_list = []
+
+    for fa in sorted(path_to_fastas.glob("*.fsa_nt")):  # genomes_path
+        cat_list.append(fa)
+
+    combine = (['cat'] + cat_list)
+
+    with open(path_to_cat, "w+") as outfile:  # genome_path
+        try:  # create master file...
+            print("Working. There are", str(len(cat_list)), "files to merge...")
+            subprocess.run(combine,
+                           cwd="/",
+                           stdout=outfile,
+                           check=True)
+            print("Done.")
+        except subprocess.CalledProcessError as e:
+            sys.exit(f"Error combining files: {e}")
+
+    remove = (['rm'] + cat_list)
+
+    try:  # ...then delete the individual files
+        print("Working. Removing the individual files...")
+        subprocess.run(remove,
+                       cwd='/',
+                       check=True)
+        print("Done.")
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"Error removing redundant individual files: {e}")
+
 
 def make_db(path_to_fasta, path_to_new_database):
     """Concatenated fasta > parsed blastdb."""
@@ -370,14 +409,17 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
     # make parsed crisprfinder results into dataframe
     d_crispr = results_dict['crisprs_list']
-    df_crispr = pd.DataFrame(d_crispr, dtype=object, columns=['genomic_accession',
-                                                              'crispr_id',
-                                                              'crispr_type',
-                                                              'start',
-                                                              'end',
-                                                              'dr_consensus_seq',
-                                                              'dr_consensus_length',
-                                                              'elements'], index=None)
+    df_crispr = pd.DataFrame(d_crispr,
+                             dtype=object,
+                             columns=['genomic_accession',
+                                      'crispr_id',
+                                      'crispr_type',
+                                      'start',
+                                      'end',
+                                      'dr_consensus_seq',
+                                      'dr_consensus_length',
+                                      'elements'],
+                             index=None)
 
     # make master dataframe. creates duplicates as needed to
     # handle multiple hits from blast/crisprfinder/both
@@ -451,7 +493,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                        'elements']]
 
     # rename columns more intuitively
-    summary = summary.rename(columns={'sseq': 'protein_sequence',
+    summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
                                       'slen': 'contig_length',
                                       'qseqid': 'ortholog_match',
                                       'dr_consensus_seq': 'DR_consensus_seq',
@@ -463,7 +505,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                                       'elements': 'array'})
 
     # parse contigs for subsequent extraction, without overloading memory
-    record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # w/o str, breaks
+    record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
 
     # extract up to +/- 20kb flanking sequence around crispr locus
     extracted_heads = []
@@ -520,14 +562,26 @@ def wrapper():
     except subprocess.CalledProcessError as e:
         sys.exit(f"Error initializing file structure: {e}")
 
-    # future: add a concatenation step? cat *.fsa_nt > new_file.fsa
+    try:  # unzip fastas
+        print(f"\nExtracting zipped fastas {hello.input_name}...")
+        unzip_fasta(gz_extractor_path, zip_path, genomes_path)
+        print(f"\nSuccess! Unzipped fastas to {genomes_path}")
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"Error extracting zipped fastas: {e}")
+
+    try:  # combine fastas and make space
+        print(f"\nConcatenating fastas at {genomes_path} and cleaning up...")
+        cat_and_cut(genomes_path, genome_path)
+        print(f"\nSuccess! New file created at {genome_path}")
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"Error combining and/or deleting fastas: {e}")
 
     try:  # making the blastdb
         print(f"\nMaking blastdb {name}...")
         make_db(genome_path, blastdb_path)
         print(f"Success! Blast database created at {blastdb_path}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error making blastdb {name}: {e}")
+        sys.exit(f"Error making blastdb: {e}")
 
     try:  # blasting the blastdb
         print(f"\nBlasting proteins in {query_path} against {name} with {hello.threads} threads...")
@@ -585,10 +639,6 @@ def wrapper():
     except Exception as e:
         sys.exit(f"Error updating .csv at {csv_path}: {e}")
 
-# results_dict = {'crisprs_list': [{'crispr_id': 'AAAA02021996.1_21523_21912', 'genomic_accession': 'AAAA02021996.1', 'crispr_type': 'CRISPR', 'start': '21523', 'end': '21912', 'dr_consensus_seq': 'TTCTGTATATTTTCGGACTTGTCCGAAA', 'dr_consensus_length': '28', 'elements': [{'element_type': 'CRISPRdr', 'start': '21523', 'end': '21550'}, {'element_type': 'CRISPRspacer', 'start': '21551', 'end': '21589', 'spacer_seq': 'CTCATTTCCGGACTTTCCGAAAACACATAGAACCAGATT', 'spacer_name': 'spacer_21551_39'}, {'element_type': 'CRISPRdr', 'start': '21590', 'end': '21617'}, {'element_type': 'CRISPRspacer', 'start': '21618', 'end': '21661', 'spacer_seq': 'GTGATTTTCGGACTTTCCGAAAAAGACTGCGAAGGCAAAAGTGG', 'spacer_name': 'spacer_21618_44'}, {'element_type': 'CRISPRdr', 'start': '21662', 'end': '21689'}, {'element_type': 'CRISPRspacer', 'start': '21690', 'end': '21734', 'spacer_seq': 'CTGATTTTCGGATTTTCCGAAAATCATCAGTAGAGTCAATTTCGC', 'spacer_name': 'spacer_21690_45'}, {'element_type': 'CRISPRdr', 'start': '21735', 'end': '21762'}, {'element_type': 'CRISPRspacer', 'start': '21763', 'end': '21807', 'spacer_seq': 'GTTATTTTCGGACTTTTCCGAGAACATCCAGAAGGATGTTGTTGG', 'spacer_name': 'spacer_21763_45'}, {'element_type': 'CRISPRdr', 'start': '21808', 'end': '21835'}, {'element_type': 'CRISPRspacer', 'start': '21836', 'end': '21884', 'spacer_seq': 'AGTTTTTGGAATATCCGAAAAATCCTTCGTTGACTTTGCTGTTGGTGCT', 'spacer_name': 'spacer_21836_49'}, {'element_type': 'CRISPRdr', 'start': '21885', 'end': '21912'}]},{'crispr_id': 'AAAA02027088.1_723_794', 'genomic_accession': 'AAAA02027088.1', 'crispr_type': 'PossibleCRISPR', 'start': '723', 'end': '794', 'dr_consensus_seq': 'TATCAATTTGACTCTAATTTTTT', 'dr_consensus_length': '23', 'elements': [{'element_type': 'CRISPRdr', 'start': '723', 'end': '745'}, {'element_type': 'CRISPRspacer', 'start': '746', 'end': '771', 'spacer_seq': 'TTAGTTTACATATTTTAATATCTAAC', 'spacer_name': 'spacer_746_26'}, {'element_type': 'CRISPRdr', 'start': '772', 'end': '794'}]}, {'crispr_id': 'AAAA02027088.1_13954_14066', 'genomic_accession': 'AAAA02027088.1', 'crispr_type': 'PossibleCRISPR', 'start': '13954', 'end': '14066', 'dr_consensus_seq': 'AAGCAAATAAAGCACGCTCTCAAATTT', 'dr_consensus_length': '27', 'elements': [{'element_type': 'CRISPRdr', 'start': '13954', 'end': '13980'}, {'element_type': 'CRISPRspacer', 'start': '13981', 'end': '14039', 'spacer_seq': 'CAGCAATTGATGACAAACTATTTGAGATATTATCTTTTGGTAAGGTTTAAATTCAGTCT', 'spacer_name': 'spacer_13981_59'}, {'element_type': 'CRISPRdr', 'start': '14040', 'end': '14066'}]}, {'crispr_id': 'AAAA02022349.1_23281_23389', 'genomic_accession': 'AAAA02022349.1', 'crispr_type': 'PossibleCRISPR', 'start': '23281', 'end': '23389', 'dr_consensus_seq': 'TGATGTGATGGAAAGTTGAAAGTTTGGA', 'dr_consensus_length': '28', 'elements': [{'element_type': 'CRISPRdr', 'start': '23281', 'end': '23308'}, {'element_type': 'CRISPRspacer', 'start': '23309', 'end': '23361', 'spacer_seq': 'AAAAAAACTTTGGAACTAAATAGGGCCTGTGTAGGAAAGTTTTGGATGTGATA', 'spacer_name': 'spacer_23309_53'}, {'element_type': 'CRISPRdr', 'start': '23362', 'end': '23389'}]}, {'crispr_id': 'AAAA02006613.1_10366_10470', 'genomic_accession': 'AAAA02006613.1', 'crispr_type': 'PossibleCRISPR', 'start': '10366', 'end': '10470', 'dr_consensus_seq': 'ATGAAATCCATTTTTACCAAACCA', 'dr_consensus_length': '24', 'elements': [{'element_type': 'CRISPRdr', 'start': '10366', 'end': '10389'}, {'element_type': 'CRISPRspacer', 'start': '10390', 'end': '10446', 'spacer_seq': 'TTTTAATTATTACCATGAAATCCCTGCGGTACGGAGCTCGATTCTCTCTGGGTTGCC', 'spacer_name': 'spacer_10390_57'}, {'element_type': 'CRISPRdr', 'start': '10447', 'end': '10470'}]}, {'crispr_id': 'AAAA02026716.1_8899_8996', 'genomic_accession': 'AAAA02026716.1', 'crispr_type': 'PossibleCRISPR', 'start': '8899', 'end': '8996', 'dr_consensus_seq': 'CGCCGAGCCGCCGCCGTAGCCGT', 'dr_consensus_length': '23', 'elements': [{'element_type': 'CRISPRdr', 'start': '8899', 'end': '8921'}, {'element_type': 'CRISPRspacer', 'start': '8922', 'end': '8973', 'spacer_seq': 'GCCGCCCGCCGACGCCATCGACGCCGCTACGGAGCAGGGGCCGTAGCTGCTA', 'spacer_name': 'spacer_8922_52'}, {'element_type': 'CRISPRdr', 'start': '8974', 'end': '8996'}]}, {'crispr_id': 'AAAA02005981.1_22110_22187', 'genomic_accession': 'AAAA02005981.1', 'crispr_type': 'PossibleCRISPR', 'start': '22110', 'end': '22187', 'dr_consensus_seq': 'TTACTACTATAGTACAAATGCATTT', 'dr_consensus_length': '25', 'elements': [{'element_type': 'CRISPRdr', 'start': '22110', 'end': '22134'}, {'element_type': 'CRISPRspacer', 'start': '22135', 'end': '22162', 'spacer_seq': 'ATCTATTTAACTTTATGCATTGTTCTCT', 'spacer_name': 'spacer_22135_28'}, {'element_type': 'CRISPRdr', 'start': '22163', 'end': '22187'}]}, {'crispr_id': 'AAAA02005981.1_27204_27318', 'genomic_accession': 'AAAA02005981.1', 'crispr_type': 'PossibleCRISPR', 'start': '27204', 'end': '27318', 'dr_consensus_seq': 'GGAGTCGGACTTTTTTATTTTTT', 'dr_consensus_length': '23', 'elements': [{'element_type': 'CRISPRdr', 'start': '27204', 'end': '27226'}, {'element_type': 'CRISPRspacer', 'start': '27227', 'end': '27244', 'spacer_seq': 'TAAAAGGGAATGGATATA', 'spacer_name': 'spacer_27227_18'}, {'element_type': 'CRISPRdr', 'start': '27245', 'end': '27267'}, {'element_type': 'CRISPRspacer', 'start': '27268', 'end': '27295', 'spacer_seq': 'ATTTTTCGCTATTGTTTTTGTTTTGACG', 'spacer_name': 'spacer_27268_28'}, {'element_type': 'CRISPRdr', 'start': '27296', 'end': '27318'}]}, {'crispr_id': 'AAAA02026886.1_5066_5145', 'genomic_accession': 'AAAA02026886.1', 'crispr_type': 'PossibleCRISPR', 'start': '5066', 'end': '5145', 'dr_consensus_seq': 'TATTGCTTTTATTATTATGTCTATAT', 'dr_consensus_length': '26', 'elements': [{'element_type': 'CRISPRdr', 'start': '5066', 'end': '5091'}, {'element_type': 'CRISPRspacer', 'start': '5092', 'end': '5119', 'spacer_seq': 'ATAAATAGGAGACACTATGCAGTGTAAA', 'spacer_name': 'spacer_5092_28'}, {'element_type': 'CRISPRdr', 'start': '5120', 'end': '5145'}]}, {'crispr_id': 'AAAA02016417.1_14766_14847', 'genomic_accession': 'AAAA02016417.1', 'crispr_type': 'PossibleCRISPR', 'start': '14766', 'end': '14847', 'dr_consensus_seq': 'TACTCCTTCGTATTTAGCCCCGGTT', 'dr_consensus_length': '25', 'elements': [{'element_type': 'CRISPRdr', 'start': '14766', 'end': '14790'}, {'element_type': 'CRISPRspacer', 'start': '14791', 'end': '14822', 'spacer_seq': 'GGACGGCCATTACAGGTTGTCATAAGGAACTC', 'spacer_name': 'spacer_14791_32'}, {'element_type': 'CRISPRdr', 'start': '14823', 'end': '14847'}]}, {'crispr_id': 'AAAA02018790.1_16953_17048', 'genomic_accession': 'AAAA02018790.1', 'crispr_type': 'PossibleCRISPR', 'start': '16953', 'end': '17048', 'dr_consensus_seq': 'CAAGGCCACTAGATCTAATGTTG', 'dr_consensus_length': '23', 'elements': [{'element_type': 'CRISPRdr', 'start': '16953', 'end': '16975'}, {'element_type': 'CRISPRspacer', 'start': '16976', 'end': '17025', 'spacer_seq': 'GCGAGCTCGTGGCCATGGGATCCTGCATCGCGATGGCTGAAAGAGAGGAC', 'spacer_name': 'spacer_16976_50'}, {'element_type': 'CRISPRdr', 'start': '17026', 'end': '17048'}]}, {'crispr_id': 'AAAA02014824.1_9290_9397', 'genomic_accession': 'AAAA02014824.1', 'crispr_type': 'PossibleCRISPR', 'start': '9290', 'end': '9397', 'dr_consensus_seq': 'CGTCCTGCTGCTTCCGCCGCATCC', 'dr_consensus_length': '24', 'elements': [{'element_type': 'CRISPRdr', 'start': '9290', 'end': '9313'}, {'element_type': 'CRISPRspacer', 'start': '9314', 'end': '9373', 'spacer_seq': 'ACATCCTTCGCCGCCGCCGCCGCCGCCTGCGCCGATCCCCCCATCCATCCCGCGAGCGAG', 'spacer_name': 'spacer_9314_60'}, {'element_type': 'CRISPRdr', 'start': '9374', 'end': '9397'}]}, {'crispr_id': 'AAAA02007038.1_5522_5633', 'genomic_accession': 'AAAA02007038.1', 'crispr_type': 'PossibleCRISPR', 'start': '5522', 'end': '5633', 'dr_consensus_seq': 'CTGTAACAATTTATTATGTTATATCA', 'dr_consensus_length': '26', 'elements': [{'element_type': 'CRISPRdr', 'start': '5522', 'end': '5547'}, {'element_type': 'CRISPRspacer', 'start': '5548', 'end': '5607', 'spacer_seq': 'GTTTATTGCAAAAAGATCCTAATGTTCAGGTGAGAAAGATATAACCAATTCTGATGTGCT', 'spacer_name': 'spacer_5548_60'}, {'element_type': 'CRISPRdr', 'start': '5608', 'end': '5633'}]}, {'crispr_id': 'AAAA02008053.1_59432_59521', 'genomic_accession': 'AAAA02008053.1', 'crispr_type': 'PossibleCRISPR', 'start': '59432', 'end': '59521', 'dr_consensus_seq': 'CTGGAAACTGCAATGTGGTGCTG', 'dr_consensus_length': '23', 'elements': [{'element_type': 'CRISPRdr', 'start': '59432', 'end': '59454'}, {'element_type': 'CRISPRspacer', 'start': '59455', 'end': '59498', 'spacer_seq': 'TCAACTGTGGCTTCTGTCTCCATAATTACAGTGCTTGTTTCTCC', 'spacer_name': 'spacer_59455_44'}, {'element_type': 'CRISPRdr', 'start': '59499', 'end': '59521'}]}], 'num_crisprs': 14}
 
-
-# if __name__ == "__main__":
-#     wrapper()
-gff_file, results_dict = parseGffToDict(results_path)
-update_csv(results_dict, csv_path, summary_csv_path)
+if __name__ == "__main__":
+    wrapper()
