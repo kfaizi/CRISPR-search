@@ -1,15 +1,11 @@
 #!/bin/bash
 # gz_extractor.sh
-# helps methodically extract fasta from NCBI WGS gz files,
-# of form "*.fsa_nt.gz"
+# extract NCBI WGS fasta files of form *.fsa_nt.gz
 
-# destination directory must exist??
+src=$1 # directory with gzipped fastas
+dest=$2 # directory for unzipped fastas
 
-
-src=$1 # pass the name of directory w/ .gzs
-dest=$2 # pass the name of directory for fastas
-
-mkdir -v -p $dest
+mkdir -vp $dest
 
 cd $src
 
