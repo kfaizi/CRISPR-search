@@ -1,6 +1,4 @@
-#DB DIFF
-#to-do: add logging, add better help chatter in argparse, add argparse flexibility
-# eg, if extract not needed, jump ahead to next part.
+#to-do: add logging
 
 """A Python (3.7) wrapper for identifying Cas protein orthologs.
 
@@ -29,8 +27,10 @@ import subprocess
 import sys
 import csv
 import pandas as pd
-# import logging
-# import logging.config
+import logging
+import logging.config
+import yaml
+import texter
 
 from pathlib import Path
 from itertools import groupby
@@ -80,11 +80,14 @@ hello = greeter.parse_args(['-i', 'V',
                             '-s', 'cf_v2.pl',
                             '-t', '4'])
 
-# configure logging
-# logging.config.dictConfig('logging.yaml')
-# logger = logging.getLogger('statusLog')
+# configure logging from file
+with open("~/meethere/logging.yaml", "r") as conf:
+    logging.config.dictConfig(yaml.safe_load(conf))
 
-NCBI_datestamp = "jul25"  # track date of last database update (NCBI)
+logger = logging.getLogger()  # use root logger
+
+# track date of last database update (NCBI)
+NCBI_datestamp = "jul25"
 
 # make all pathlike args full paths (resolve "~/")
 working_path = Path(hello.working_dir).expanduser()
@@ -161,14 +164,14 @@ def move_script(path_to_script, path_to_copy):
                    check=True)
 
 
-def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
-    """(G)unzip compressed fasta files."""
-    subprocess.run(["bash",
-                    f"{path_to_gz_extractor}",
-                    f"{path_to_zipped}",
-                    f"{path_to_dest}"],
-                   cwd="/",
-                   check=True)
+# def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
+#     """(G)unzip compressed fasta files."""
+#     subprocess.run(["bash",
+#                     f"{path_to_gz_extractor}",
+#                     f"{path_to_zipped}",
+#                     f"{path_to_dest}"],
+#                    cwd="/",
+#                    check=True)
 
 
 def cat_and_cut(path_to_fastas, path_to_cat):
@@ -180,7 +183,7 @@ def cat_and_cut(path_to_fastas, path_to_cat):
 
     combine = (['cat'] + cat_list)
 
-    with open(path_to_cat, "w+") as outfile:  # genome_path
+    with open(path_to_cat, "w") as outfile:  # genome_path
         try:  # create master file...
             print("Working. There are", str(len(cat_list)), "files to merge...")
             subprocess.run(combine,
@@ -215,8 +218,6 @@ def make_db(path_to_fasta, path_to_new_database):
                     f"{path_to_new_database}"],
                    cwd="/",
                    check=True)
-
-# makeblastdb -in foo_cat.fsa -parse_seqids -dbtype nucl [-out bar]
 
 
 def search_db(path_to_database, path_to_query, path_to_new_archive, threads):
@@ -343,7 +344,6 @@ def parseGffToDict(path_to_gff):  # ie results_path
     num_crisprs = len(list(data_split))
     results_dict.update({
         'num_crisprs': num_crisprs,
-        # 'assembly_accession': assembly_accession
     })
     for section in data_split:  # for each found crispr section
         # split into lines and remove top '##gff-version 3'
@@ -530,15 +530,14 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
                 # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
                 extracted_head = str(record_dict[acc].description)
-                # extracted_body = str(record_dict[acc].seq)
                 extracted_name = crispr_id + "_extracted.fa"
                 extracted_path = Path(results_path, extracted_name)
 
-                # write extracted sequence to a new fasta file...
-                # with open(extracted_path, 'w') as outfile:
-                #     SeqIO.write(extracted_seq, outfile, 'fasta')
+                write extracted sequence to a new fasta file...
+                with open(extracted_path, 'w') as outfile:
+                    SeqIO.write(extracted_seq, outfile, 'fasta')
 
-                # print(f"Wrote extracted CRISPR locus to {extracted_path}")
+                print(f"Wrote extracted CRISPR locus to {extracted_path}")
 
         except Exception:
             pass
