@@ -533,7 +533,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                 extracted_name = crispr_id + "_extracted.fa"
                 extracted_path = Path(results_path, extracted_name)
 
-                write extracted sequence to a new fasta file...
+                # write extracted sequence to a new fasta file...
                 with open(extracted_path, 'w') as outfile:
                     SeqIO.write(extracted_seq, outfile, 'fasta')
 
