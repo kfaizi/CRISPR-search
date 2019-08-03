@@ -254,18 +254,22 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
 
 def make_db(path_to_fasta, path_to_new_database):
     """Concatenated fasta > parsed blastdb."""
-    subprocess.run(["makeblastdb",
-                    "-in",
-                    f"{path_to_fasta}",  # in ~/genomes/
-                    "-parse_seqids",
-                    "-max_file_sz",
-                    "4GB",
-                    "-dbtype",
-                    "nucl",
-                    "-out",
-                    f"{path_to_new_database}"],
-                   cwd="/",
-                   check=True)
+    p = subprocess.run(["makeblastdb",
+                        "-in",
+                        f"{path_to_fasta}",  # in ~/genomes/
+                        "-parse_seqids",
+                        "-max_file_sz",
+                        "4GB",
+                        "-dbtype",
+                        "nucl",
+                        "-out",
+                        f"{path_to_new_database}"],
+                       cwd="/",
+                       text=True,
+                       capture_output=True,
+                       check=True)
+    results = str(p.stdout)
+    logger.info(results)
 
 
 def search_db(path_to_database, path_to_query, path_to_new_archive, threads):
