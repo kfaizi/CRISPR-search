@@ -1,5 +1,3 @@
-#to-do: add logging
-
 """A Python (3.7) wrapper for identifying Cas protein orthologs.
 
 Searches prokaryotic/metagenomic DNA sequence data for
@@ -13,6 +11,10 @@ with CRISPRFinder. The results are tabulated in a CSV file.
 
 This script is not well-optimized... yet ;)
 """
+
+# TODO use basic log config to facilitate dynamic filenames, and
+# cut down on dependencies (yaml, logging.config, extra file)
+
 
 __author__ = "Kian Faizi"
 __copyright__ = "Copyright 2019, Kian Faizi"
@@ -31,6 +33,7 @@ import logging
 import logging.config
 import yaml
 import texter
+import signal
 
 from pathlib import Path
 from itertools import groupby
@@ -72,19 +75,22 @@ greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", r
 #                             '-s', 'cf_v2.pl',
 #                             '-t', '4'])
 
-hello = greeter.parse_args(['-i', 'V',
+hello = greeter.parse_args(['-i', 'A',
                             '-w', '~/search/',  # use pathlib to avoid / errors
                             '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
                             '-g', '~/search/genomes/',
                             '-q', 'Cas13d_proteins.fa',
                             '-s', 'cf_v2.pl',
-                            '-t', '4'])
+                            '-t', '8'])
 
 # configure logging from file
-with open("~/meethere/logging.yaml", "r") as conf:
+with open("/mnt/md0/kfaizi/logging.yaml", "r") as conf:  # TEMP
     logging.config.dictConfig(yaml.safe_load(conf))
 
 logger = logging.getLogger()  # use root logger
+
+# catch sigints
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 # track date of last database update (NCBI)
 NCBI_datestamp = "jul25"
@@ -102,7 +108,7 @@ genomes_path = Path(genomes_dir, hello.input_name)
 query_path = sorted(working_path.glob(hello.query))[0]
 og_script_path = sorted(working_path.glob(hello.script))[0]
 
-gz_extractor_path = '~/cellophane/gz_extractor.sh'
+gz_extractor_path = '/mnt/md0/kfaizi/cellophane/gz_extractor.sh'  # TEMP
 zip_path = Path(working_path, 'raw', hello.input_name)
 
 output_path = Path(working_path, "output", name)  # for each name
@@ -110,6 +116,8 @@ output_path.mkdir(parents=True, exist_ok=True)  # make dirs incl parent
 script_path = Path(output_path, hello.script)
 
 genome_path = Path(genomes_path, name).with_suffix(".fa")
+cleaned_path = Path(genomes_path, name + "_cleaned").with_suffix(".fa")
+removed_path = Path(genomes_path, name + "_removed").with_suffix(".fa")
 
 archive_name = name + "_archive"
 archive_path = Path(output_path, archive_name)
@@ -138,22 +146,6 @@ sections = "10 sseqid slen sstart send sseq length sframe qseqid ppos pident qse
 sections_list = sections.split()
 sections_list.pop(0)  # remove filetype specifier (10)
 
-# Currently:
-# sseqid, the ID for the contig/subject (the fasta header)
-# slen, the total length of contig/subject ???
-# sstart, start of alignment in contig
-# send, end of alignment in contig
-# sseq, the aligned part of the contig sequence
-# length, the length of the aligned part
-# sframe, the frame of subject
-# qseqid, the name of the match (query/CasRx, Dj, etc)
-# ppos, percent positive/sim
-# pident, percent identity
-# qseq, the aligned part of the match
-# bitscore
-# evalue
-# saccver, accession ID.version
-
 
 def move_script(path_to_script, path_to_copy):
     """To avoid CF errors, make a copy of it in each output directory."""
@@ -164,14 +156,14 @@ def move_script(path_to_script, path_to_copy):
                    check=True)
 
 
-# def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
-#     """(G)unzip compressed fasta files."""
-#     subprocess.run(["bash",
-#                     f"{path_to_gz_extractor}",
-#                     f"{path_to_zipped}",
-#                     f"{path_to_dest}"],
-#                    cwd="/",
-#                    check=True)
+def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
+    """(G)unzip compressed fasta files."""
+    subprocess.run(["bash",
+                    f"{path_to_gz_extractor}",
+                    f"{path_to_zipped}",
+                    f"{path_to_dest}"],
+                   cwd="/",
+                   check=True)
 
 
 def cat_and_cut(path_to_fastas, path_to_cat):
@@ -185,25 +177,82 @@ def cat_and_cut(path_to_fastas, path_to_cat):
 
     with open(path_to_cat, "w") as outfile:  # genome_path
         try:  # create master file...
-            print("Working. There are", str(len(cat_list)), "files to merge...")
+            numfiles = str(len(cat_list))
+            logger.info(f"Working. There are {numfiles} files to merge...")
             subprocess.run(combine,
                            cwd="/",
                            stdout=outfile,
                            check=True)
-            print("Done.")
+            logger.info("Done.")
         except subprocess.CalledProcessError as e:
-            sys.exit(f"Error combining files: {e}")
+            logger.critical(f"Error combining files: {e}")
+            texter.send_text(f"Failed {name}")
+            sys.exit()
 
     remove = (['rm'] + cat_list)
 
     try:  # ...then delete the individual files
-        print("Working. Removing the individual files...")
+        logger.info("Working. Removing the individual files...")
         subprocess.run(remove,
                        cwd='/',
                        check=True)
-        print("Done.")
+        logger.info("Done.")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error removing redundant individual files: {e}")
+        logger.critical(f"Error removing redundant individual files: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
+
+
+def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
+    """Dedupe fasta by sequence id."""
+    cleaned_accs = {}
+    removed_accs = {}
+    skipcount = 0
+
+    record = SeqIO.index(str(path_to_cat), 'fasta')
+
+    for idx in record:
+        id_split = idx.split('|')
+
+        if len(id_split) == 1:  # then it's an accession
+            acc = idx
+        elif 'gb' in id_split:
+            accindex = id_split.index('gb') + 1
+            acc = id_split[accindex]
+        else:
+            logger.warning(f"Warning! Sequence id format unrecognized: {idx}")
+
+        try:
+            if acc not in cleaned_accs:
+                cleaned_accs[acc] = idx
+            else:  # then it's a duplicate; keep track
+                removed_accs[acc] = idx
+        except Exception:
+            logger.warning(f"Warning! Sequence {idx} skipped.")
+            skipcount += 1
+            pass
+
+    with open(path_to_new_cat, 'w+') as cleanfile:
+        for ids in cleaned_accs.values():
+            SeqIO.write(record[ids], cleanfile, 'fasta')  # new deduped fasta
+
+        if skipcount >= 1:
+            logger.warning(f"Warning! Skipped {skipcount} sequences.")
+
+    with open(path_to_removed, 'w+') as remfile:
+        for ids in removed_accs.values():
+            SeqIO.write(record[ids], remfile, 'fasta')  # holds deleted seqs
+
+    # try:  # deletes og fasta to make space. will validate b4 using this
+    #     logger.info(f"Deleting original file {path_to_cat}")
+    #     subprocess.run(["rm",
+    #                    f"{path_to_cat}"],
+    #                    cwd='/',
+    #                    check=True)
+    # except subprocess.CalledProcessError as e:
+    #     logger.critical(f"Error deleting original file: {e}")
+    #     texter.send_text(f"Failed {name}")
+    #     sys.exit()
 
 
 def make_db(path_to_fasta, path_to_new_database):
@@ -212,6 +261,8 @@ def make_db(path_to_fasta, path_to_new_database):
                     "-in",
                     f"{path_to_fasta}",  # in ~/genomes/
                     "-parse_seqids",
+                    "-max_file_sz",
+                    "4GB",
                     "-dbtype",
                     "nucl",
                     "-out",
@@ -260,17 +311,20 @@ def read_csv(path_to_csv):
         # next(ID_finder, None)  # skip the headers. Do not use for raw blast csv as it has none
         try:
             linecount = sum(1 for line in ID_finder)  # this iterates through the csv...
-            print("Working. There are", linecount, "contig IDs to parse...")
+            logger.info(f"Working. There are {linecount} contig IDs to parse...")
             f.seek(0)  # ...so we need to move back to start
             ID_finder = csv.reader(f)  # reset generator
             for line in ID_finder:
                 output_list.append(line[0])  # make list of IDs
             return output_list
         except csv.Error as e:
-            sys.exit(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
+            logger.critical(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
+            texter.send_text(f"Failed {name}")
+            sys.exit()
         finally:
             if len(output_list) != linecount:
-                print("Error: initial and final line counts do not match! Exiting")
+                logger.critical("Error: initial and final line counts do not match! Exiting")
+                texter.send_text(f"Failed {name}")
                 sys.exit()
 
 
@@ -279,12 +333,14 @@ def list_csv(path_to_csv, path_to_new_IDs):
     with open(path_to_new_IDs, 'w+', newline='') as f:
         try:
             output_list = read_csv(path_to_csv)
-            print(f"Writing IDs to text file {path_to_new_IDs}...")
+            logger.info(f"Writing IDs to text file {path_to_new_IDs}...")
             for ID in output_list:
                 f.write(f"{ID}\n")
-            # print("Done!")
+            logger.info("Done!")
         except csv.Error as e:
-            sys.exit(f"Error writing accession data for {path_to_csv}: {e}")
+            logger.critical(f"Error writing accession data for {path_to_csv}: {e}")
+            texter.send_text(f"Failed {name}")
+            sys.exit()
 
 
 def extract_contigs(path_to_database, path_to_IDs, path_to_new_contigs):
@@ -303,7 +359,7 @@ def extract_contigs(path_to_database, path_to_IDs, path_to_new_contigs):
 
 
 def dedupe_contigs(path_to_contigs, path_to_new_contigs):
-    """Dedupe DNA fasta by sequence; from https://www.biostars.org/p/3003/."""
+    """Dedupe fasta by sequence; from https://www.biostars.org/p/3003/."""
     all_seqs = set()
     with open(path_to_contigs, 'r') as infile:
         with open(path_to_new_contigs, 'w+') as outfile:
@@ -329,7 +385,8 @@ def find_CRISPRs(path_to_crisprfinder, path_to_contigs, path_to_new_gff):
                        capture_output=True,
                        text=True,
                        check=True)
-    print("\nResults: \n" + "-"*7 + "\n" + p.stdout)
+    results = str(p.stdout)
+    logger.info(results)
 
 
 def parseGffToDict(path_to_gff):  # ie results_path
@@ -406,6 +463,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
     """Add headers, and append CF data."""
     # make blast csv into dataframe
     df_blast = pd.read_csv(path_to_blast_csv, dtype=object, header=None, names=sections_list, index_col=None)
+    df_blast['acc2'] = df_blast['saccver']
 
     # make parsed crisprfinder results into dataframe
     d_crispr = results_dict['crisprs_list']
@@ -428,6 +486,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
     # make new summary dataframe
     summary = combo[['sseq',
+                     'acc2',
                      'qseqid',
                      'ppos',
                      'pident',
@@ -474,6 +533,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
     # reorder columns for readability
     summary = summary[['sseq',
+                       'acc2',
                        'qseqid',
                        'ppos',
                        'pident',
@@ -494,6 +554,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
     # rename columns more intuitively
     summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
+                                      'acc2': 'accession_number',
                                       'slen': 'contig_length',
                                       'qseqid': 'ortholog_match',
                                       'dr_consensus_seq': 'DR_consensus_seq',
@@ -528,7 +589,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                 extracted_len = extracted_end - extracted_start + 1
                 extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
 
-                # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
+                # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
                 extracted_head = str(record_dict[acc].description)
                 extracted_name = crispr_id + "_extracted.fa"
                 extracted_path = Path(results_path, extracted_name)
@@ -537,7 +598,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                 with open(extracted_path, 'w') as outfile:
                     SeqIO.write(extracted_seq, outfile, 'fasta')
 
-                print(f"Wrote extracted CRISPR locus to {extracted_path}")
+                logger.info(f"Wrote extracted CRISPR locus to {extracted_path}")
 
         except Exception:
             pass
@@ -556,88 +617,139 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
 
 def wrapper():
     """Put it all together."""
+    try:  # initialize
+        texter.send_text(f"Starting search on {name}")
+        logger.info("Starting...")
+    except Exception as e:
+        logger.error(f"Something went wrong while starting: {e}")
+        texter.send_text(f"Startup {name} failed :(")
+        sys.exit()
+
     try:  # copy CF to each result dir to avoid error
         move_script(og_script_path, script_path)
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error initializing file structure: {e}")
+        logger.critical(f"Error initializing file structure: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # unzip fastas
-        print(f"\nExtracting zipped fastas {hello.input_name}...")
+        logger.info(f"Extracting zipped fastas {hello.input_name}...")
         unzip_fasta(gz_extractor_path, zip_path, genomes_path)
-        print(f"\nSuccess! Unzipped fastas to {genomes_path}")
+        logger.info(f"Success! Unzipped fastas to {genomes_path}")
+        texter.send_text(f"extracted {name}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error extracting zipped fastas: {e}")
+        logger.critical(f"Error extracting zipped fastas: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # combine fastas and make space
-        print(f"\nConcatenating fastas at {genomes_path} and cleaning up...")
+        logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
         cat_and_cut(genomes_path, genome_path)
-        print(f"\nSuccess! New file created at {genome_path}")
+        logger.info(f"Success! New file created at {genome_path}")
+        texter.send_text(f"concatenated {name}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error combining and/or deleting fastas: {e}")
+        logger.critical(f"Error combining and/or deleting fastas: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
+
+    try:  # deduplicating the raw data
+        logger.info(f"Deduplicating sequences in {genome_path}...")
+        dedupe_fasta(genome_path, cleaned_path, removed_path)
+        logger.info(f"Success! Cleaned fasta created at {cleaned_path}, with the removed seqs saved at {removed_path}")
+        texter.send_text(f"deduped {name}")
+    except Exception as e:
+        logger.critical(f"Error deduping: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # making the blastdb
-        print(f"\nMaking blastdb {name}...")
-        make_db(genome_path, blastdb_path)
-        print(f"Success! Blast database created at {blastdb_path}")
+        logger.info(f"Making blastdb {name}...")
+        make_db(cleaned_path, blastdb_path)
+        logger.info(f"Success! Blast database created at {blastdb_path}")
+        texter.send_text(f"made db {name}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error making blastdb: {e}")
+        logger.critical(f"Error making blastdb: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # blasting the blastdb
-        print(f"\nBlasting proteins in {query_path} against {name} with {hello.threads} threads...")
+        logger.info(f"Blasting proteins in {query_path} against {name} with {hello.threads} threads...")
         search_db(blastdb_path, query_path, archive_path, hello.threads)
-        print(f"Success! Blast results written to {archive_path}")
+        logger.info(f"Success! Blast results written to {archive_path}")
+        texter.send_text(f"blasted {name}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error blasting {query_path} against blastdb {name}: {e}")
+        logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # creating a .csv from the results
-        print("\nCreating .csv file from the blast results...")
+        logger.info("Creating .csv file from the blast results...")
         make_csv(archive_path, csv_path)
-        print(f"Success! New .csv file created at {csv_path}")
+        logger.info(f"Success! New .csv file created at {csv_path}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error creating .csv file from the archive at {archive_path}: {e}")
+        logger.critical(f"Error creating .csv file from the archive at {archive_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # make a list of accession IDs
-        print("\nExtracting accession ID numbers from the .csv file...")
+        logger.info("Extracting accession ID numbers from the .csv file...")
         list_csv(csv_path, accessions_path)
-        print(f"Success! Accession list created at {accessions_path}")
+        logger.info(f"Success! Accession list created at {accessions_path}")
     except Exception as e:
-        sys.exit(f"Error creating accession list at {accessions_path}: {e}")
+        logger.critical(f"Error creating accession list at {accessions_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # extract the corresponding contigs
-        print(f"\nReading accession list at {accessions_path} and extracting corresponding contigs from {blastdb_path}...")
+        logger.info(f"Reading accession list at {accessions_path} and extracting corresponding contigs from {blastdb_path}...")
         extract_contigs(blastdb_path, accessions_path, contigs_path)
-        print(f"Success! Contigs extracted to {contigs_path}")
+        logger.info(f"Success! Contigs extracted to {contigs_path}")
     except Exception as e:
-        sys.exit(f"Error extracting contigs to {contigs_path}: {e}")
+        logger.critical(f"Error extracting contigs to {contigs_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # deduplicate the contigs fasta
-        print(f"\nDeduplicating BLAST hits at {contigs_path}...")
+        logger.info(f"Deduplicating BLAST hits at {contigs_path}...")
         dedupe_contigs(contigs_path, dedupe_path)
-        print(f"Success! Contigs deduplicated and moved to {dedupe_path}")
+        logger.info(f"Success! Contigs deduplicated and moved to {dedupe_path}")
     except Exception as e:
-        sys.exit(f"Error deduplicating contigs at {contigs_path}: {e}")
+        logger.critical(f"Error deduplicating contigs at {contigs_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # search 'em with crisprfinder
-        print(f"\nSearching sequences in {dedupe_path} for DRs...")
+        logger.info(f"Searching sequences in {dedupe_path} for DRs...")
         find_CRISPRs(script_path, dedupe_path, results_path)
-        print(f"Success! CRISPRFinder output created at {results_path}")
+        logger.info(f"Success! CRISPRFinder output created at {results_path}")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"Error searching for DRs: {e}")
+        logger.critical(f"Error searching for DRs: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # parse the gff output
-        print(f"\nParsing the CRISPRFinder output...")
+        logger.info(f"Parsing the CRISPRFinder output...")
         gff_file, results_dict = parseGffToDict(results_path)
-        print(f"Success! Parsed gff {gff_file} to dict")
+        logger.info(f"Success! Parsed gff {gff_file} to dict")
     except Exception as e:
-        sys.exit(f"Error parsing results at {results_path}: {e}")
+        logger.critical(f"Error parsing results at {results_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
     try:  # update the csv
-        print(f"\nUpdating the .csv at {csv_path} with new info...")
+        logger.info(f"Updating the .csv at {csv_path} with new info...")
         update_csv(results_dict, csv_path, summary_csv_path)
-        print(f"Success! Final output file located at {summary_csv_path}")
+        logger.info(f"Success! Final output file located at {summary_csv_path}")
+        texter.send_text(f"All done {name}")
     except Exception as e:
-        sys.exit(f"Error updating .csv at {csv_path}: {e}")
+        logger.critical(f"Error updating .csv at {csv_path}: {e}")
+        texter.send_text(f"Failed {name}")
+        sys.exit()
 
 
 if __name__ == "__main__":
-    wrapper()
+    try:
+        wrapper()
+    except KeyboardInterrupt:
+        logger.error("Keyboard interrupt")
+        sys.exit()
