@@ -12,10 +12,6 @@ with CRISPRFinder. The results are tabulated in a CSV file.
 This script is not well-optimized... yet ;)
 """
 
-# TODO use basic log config to facilitate dynamic filenames, and
-# cut down on dependencies (yaml, logging.config, extra file)
-
-
 __author__ = "Kian Faizi"
 __copyright__ = "Copyright 2019, Kian Faizi"
 #  __license__ = null
@@ -30,8 +26,6 @@ import sys
 import csv
 import pandas as pd
 import logging
-import logging.config
-import yaml
 import texter
 import signal
 
@@ -64,30 +58,16 @@ greeter.add_argument("-s", "--script", help="Name of CRISPRFinder script file.",
 greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", required=True)
 
 ######################## for interactivity, use: ###########################
-# hello = greeter.parse_args()
+hello = greeter.parse_args()
 
 ######################## for hardcoded testing, use: ########################
 # hello = greeter.parse_args(['-i', 'A',
-#                             '-w', '/Users/kianfaizi/dev/',  # use pathlib to avoid / errors
-#                             '-b', '/Users/kianfaizi/dev/blastdb/',  # use pathlib to avoid / errors
-#                             '-g', '/Users/kianfaizi/dev/genomes/',  # use pathlib to avoid / errors
+#                             '-w', '~/search/',  # use pathlib to avoid / errors
+#                             '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
+#                             '-g', '~/search/genomes/',
 #                             '-q', 'Cas13d_proteins.fa',
 #                             '-s', 'cf_v2.pl',
-#                             '-t', '4'])
-
-hello = greeter.parse_args(['-i', 'A',
-                            '-w', '~/search/',  # use pathlib to avoid / errors
-                            '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
-                            '-g', '~/search/genomes/',
-                            '-q', 'Cas13d_proteins.fa',
-                            '-s', 'cf_v2.pl',
-                            '-t', '8'])
-
-# configure logging from file
-with open("/mnt/md0/kfaizi/logging.yaml", "r") as conf:  # TEMP
-    logging.config.dictConfig(yaml.safe_load(conf))
-
-logger = logging.getLogger()  # use root logger
+#                             '-t', '8'])
 
 # catch sigints
 signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -102,6 +82,7 @@ blastdb_dir = Path(hello.blastdb_dir).expanduser()
 
 # Constants
 name = hello.input_name + "_" + NCBI_datestamp
+logname = "log_" + name + ".log"
 
 blastdb_path = Path(blastdb_dir, hello.input_name, name)
 genomes_path = Path(genomes_dir, hello.input_name)
@@ -145,6 +126,22 @@ summary_csv_path = Path(output_path, summary_csv_name).with_suffix(".csv")
 sections = "10 sseqid slen sstart send sseq length sframe qseqid ppos pident qseq bitscore evalue saccver"
 sections_list = sections.split()
 sections_list.pop(0)  # remove filetype specifier (10)
+
+# configure logging
+logger = logging.getLogger()  # use root logger
+logger.setLevel(logging.DEBUG)
+
+sf = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+file = logging.FileHandler(filename=logname, filemode='a')
+file.setLevel(logging.DEBUG)
+file.setFormatter(sf)
+logger.addHandler(file)
+
+console = logging.StreamHandler(stream='ext://sys.stdout')
+console.setLevel(logging.ERROR)
+console.setFormatter(sf)
+logger.addHandler(console)
 
 
 def move_script(path_to_script, path_to_copy):
