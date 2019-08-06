@@ -142,20 +142,6 @@ console.setLevel(logging.ERROR)
 console.setFormatter(sf)
 logger.addHandler(console)
 
-# define program-specific exceptions
-
-
-class NoBlastResultsException(Exception):
-    """Zero matches found by tblastn."""
-
-    pass
-
-
-class NoCrisprResultsException(Exception):
-    """Zero arrays found by CRISPRFinder."""
-
-    pass
-
 # define functions
 
 
@@ -332,22 +318,21 @@ def read_csv(path_to_csv):
         try:
             linecount = sum(1 for line in ID_finder)  # this iterates through the csv...
             logger.info(f"Working. There are {linecount} contig IDs to parse...")
+
             if linecount == 0:  # then blast found no results
-                raise NoBlastResultsException("Blast returned no results; finishing up.")
-            f.seek(0)  # ...so we need to move back to start
-            ID_finder = csv.reader(f)  # reset generator
-            for line in ID_finder:
-                output_list.append(line[0])  # make list of IDs
-            return output_list
+                logger.info("Blast found no hits; finishing up.")
+                sys.exit()
+
+            else:
+                f.seek(0)  # ...so we need to move back to start
+                ID_finder = csv.reader(f)  # reset generator
+                for line in ID_finder:
+                    output_list.append(line[0])  # make list of IDs
+                return output_list
 
         except csv.Error as e:
             logger.critical(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
             texter.send_text(f"Failed {name}")
-            sys.exit()
-
-        except NoBlastResultsException as e:
-            logger.info(e)
-            texter.send_text(f"All done {name}")
             sys.exit()
 
         finally:
@@ -427,33 +412,33 @@ def parseGffToDict(path_to_gff):  # ie results_path
     results_dict = {'crisprs_list': []}
     with open(gff_file) as file:
         data = file.read()  # entire gff file
+
     data_split = data.split('\n\n')  # split into found crisprs
     data_split = list(filter(None, data_split))  # remove empty elements
-    num_crisprs = len(list(data_split)) - 1  # don't count '##gff-version 3' element
-    results_dict.update({
-        'num_crisprs': num_crisprs,
-    })
-    for section in data_split:  # for each found crispr section
-        try:
+
+    if data_split == ['##gff-version 3\n']:
+        logger.info("CRISPRFinder found no hits.")
+        results_dict['crisprs_list'] = None
+        results_dict['num_crisprs'] = 0
+
+    else:
+        num_crisprs = len(data_split)
+        results_dict['num_crisprs'] = num_crisprs
+
+        for section in data_split:  # for each found crispr section
             # split into lines and remove top '##gff-version 3'
             section_split = section.split('\n')
             section_split = [line for line in section_split if '##' not in line]
-            section_split_trim = list(filter(None, section_split))
-
-            if len(section_split_trim) == 0:
-                raise NoCrisprResultsException("CRISPRFinder returned no results; finishing up.")
-                break
 
             for line_idx, line in enumerate(section_split):  # for each line in section
                 line_split = line.split('\t')
+
                 if line_idx == 0:  # first line is summary of found crispr
                     # from last element in line (attributes), get values
                     attr_split = line_split[-1].split(';')
-
                     dr_consensus_seq = attr_split[0][len('DR='):]
                     dr_consensus_length = attr_split[1][len('DR_length='):]
                     crispr_id = attr_split[-1][len('ID='):]  # ie 'parent'
-
                     # construct item to add to dictionary
                     dict_item = {
                       'crispr_id': crispr_id,
@@ -465,10 +450,8 @@ def parseGffToDict(path_to_gff):  # ie results_path
                       'dr_consensus_length': dr_consensus_length,
                       'elements': []
                     }
-
                 else:  # other lines are found crispr elements (dr or spacer)
                     attr_split = line_split[-1].split(';')
-
                     element_type = line_split[2]
                     element_start = line_split[3]
                     element_end = line_split[4]
@@ -479,7 +462,6 @@ def parseGffToDict(path_to_gff):  # ie results_path
                           'start': element_start,
                           'end': element_end
                         })
-
                     elif element_type == 'CRISPRspacer':
                         spacer_seq = attr_split[0][len('sequence='):]
                         spacer_name = attr_split[1][len('name='):]
@@ -493,10 +475,6 @@ def parseGffToDict(path_to_gff):  # ie results_path
 
             # add to crisprs list in dictionary
             results_dict['crisprs_list'].append(dict_item)
-
-        except NoCrisprResultsException as e:
-            logger.info(e)
-            results_dict['crisprs_list'] = None
 
     return gff_file, results_dict
 
