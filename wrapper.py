@@ -223,15 +223,14 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
             acc = id_split[accindex]
         else:
             logger.warning(f"Warning! Sequence id format unrecognized: {idx}")
+            acc = None
 
-        try:
-            if acc not in cleaned_accs:
-                cleaned_accs[acc] = idx
-            else:  # then it's a duplicate; keep track
-                removed_accs[acc] = idx
-        except Exception:
+        if acc is None:
             skipcount += 1
-            pass
+        elif acc not in cleaned_accs:
+            cleaned_accs[acc] = idx
+        elif acc in cleaned_accs:  # then it's a duplicate; keep track
+            removed_accs[acc] = idx
 
     with open(path_to_new_cat, 'w+') as cleanfile:
         for ids in cleaned_accs.values():
@@ -483,12 +482,35 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
     """Add headers, and append CF data."""
     # make blast csv into dataframe
     df_blast = pd.read_csv(path_to_blast_csv, dtype=object, header=None, names=sections_list, index_col=None)
-    df_blast['acc2'] = df_blast['saccver']  # make duplicate accession column for later
+    df_blast['acc2'] = df_blast['saccver']  # make duplicate accession column to preserve after merge
 
     # send parsed crisprfinder results into dataframe
     if results_dict['num_crisprs'] == 0:
-        # do stuff
-        pass
+        # do stuff:
+        # add fasta headers to every row of blast hits.
+        # make all the columns in the usual summary, but empty.
+        # add the DR_found column with 'no's (integrate with below somehow?)
+        # return it.
+        new_cols = ['sseq',
+                    'acc2',
+                    'qseqid',
+                    'ppos',
+                    'pident',
+                    'crispr_type',
+                    'crispr_id',
+                    'dr_consensus_seq',
+                    'dr_consensus_length',
+                    'bitscore',
+                    'evalue',
+                    'slen',
+                    'sstart',
+                    'send',
+                    'sframe',
+                    'length',
+                    'start',
+                    'end',
+                    'elements']
+        summary = df_blast.reindex(columns=new_cols, copy=True)  # may need to be [new_cols]
 
     else:
         d_crispr = results_dict['crisprs_list']
@@ -524,119 +546,134 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                          'slen',
                          'sstart',
                          'send',
+                         'sframe',
                          'length',
                          'start',
                          'end',
                          'elements']].copy()
 
-        # create columns w/ whether DR found (y/n) and if yes, how many
-        dr_status = []
-        dr_sum = []
+    # create columns w/ whether DR found (y/n) and if yes, how many
+    dr_status = []
+    dr_sum = []
+    array_lens = []
 
-        for eltup in summary[['dr_consensus_seq', 'elements']].itertuples():
-            dr_count = 0
-            dr_exists = 'no'
+    for eltup in summary[['dr_consensus_seq', 'elements', 'start', 'end']].itertuples():
+        dr_count = 0
+        dr_exists = 'no'
 
-            # if dr_consensus_seq is there, then DR was found
-            if isinstance(eltup.dr_consensus_seq, str):
-                dr_exists = 'yes'
+        # if dr_consensus_seq is there, then DR was found
+        if isinstance(eltup.dr_consensus_seq, str):
+            dr_exists = 'yes'
+        dr_status.append(dr_exists)
 
-            dr_status.append(dr_exists)
+        for dictx in eltup.elements:
+            for v in dictx.values():
+                if v == "CRISPRdr":
+                    dr_count += 1
+        dr_sum.append(dr_count)
 
-            try:
-                for dictx in eltup.elements:
-                    for v in dictx.values():
-                        if v == "CRISPRdr":
-                            dr_count += 1
-            except Exception:
-                pass
+        array_len = abs(int(eltup.end) - int(eltup.start)) + 1
+        array_lens.append(array_len)
 
-            dr_sum.append(dr_count)
+    # add columns to summary
+    summary.loc[:, 'DR_found'] = dr_status
+    summary.loc[:, 'num_DRs'] = dr_sum
+    summary.loc[:, 'array_length'] = array_lens
 
-        # add columns to summary
-        summary.loc[:, 'DR_found'] = dr_status
-        summary.loc[:, 'num_DRs'] = dr_sum
+    # rename columns more intuitively
+    summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
+                                      'acc2': 'accession_number',
+                                      'qseqid': 'ortholog_match',
+                                      'dr_consensus_seq': 'DR_consensus_seq',
+                                      'dr_consensus_length': 'DR_consensus_length',
+                                      'slen': 'contig_length',
+                                      'sstart': 'protein_start',
+                                      'send': 'protein_end',
+                                      'length': 'protein_length',
+                                      'sframe': 'protein_frame',
+                                      'start': 'array_start',
+                                      'end': 'array_end',
+                                      'elements': 'array'})
 
-        # reorder columns for readability
-        summary = summary[['sseq',
-                           'acc2',
-                           'qseqid',
-                           'ppos',
-                           'pident',
-                           'bitscore',
-                           'evalue',
-                           'crispr_type',
-                           'crispr_id',
-                           'DR_found',
-                           'num_DRs',
-                           'dr_consensus_seq',
-                           'dr_consensus_length',
-                           'slen',
-                           'sstart',
-                           'send',
-                           'length',
-                           'start',
-                           'end',
-                           'elements']]
+    # parse contigs for subsequent extraction, without overloading memory
+    record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
+    # extract up to +/- 20kb flanking sequence around crispr locus
+    extracted_heads = []
+    extracted_paths = []
+    distances = []
 
-        # rename columns more intuitively
-        summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
-                                          'acc2': 'accession_number',
-                                          'slen': 'contig_length',
-                                          'qseqid': 'ortholog_match',
-                                          'dr_consensus_seq': 'DR_consensus_seq',
-                                          'dr_consensus_length': 'DR_consensus_length',
-                                          'sstart': 'protein_start',
-                                          'send': 'protein_end',
-                                          'length': 'protein_length',
-                                          'start': 'array_start',
-                                          'end': 'array_end',
-                                          'elements': 'array'})
+    for row in summary.itertuples():
+        extracted_head = None
+        extracted_path = None
+        dist = None  # protein-array distance (nt)
 
-        # parse contigs for subsequent extraction, without overloading memory
-        record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
+        if row.DR_exists == "yes":  # then extract flanking sequence
 
-        # extract up to +/- 20kb flanking sequence around crispr locus
-        extracted_heads = []
-        extracted_paths = []
+            crispr_id = row.crispr_id
+            acc = crispr_id.split('_')[0]
 
-        for row in summary.itertuples():
-            extracted_head = None
-            extracted_path = None
+            extracted_start = max(int(row.array_start)-20000, 1)
+            extracted_end = min(int(row.array_end)+20000, int(row.contig_length))
+            extracted_len = extracted_end - extracted_start + 1
+            extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
+            # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
+            extracted_head = str(record_dict[acc].description)
+            extracted_name = crispr_id + "_extracted.fa"
+            extracted_path = Path(results_path, extracted_name)
 
-            try:
-                acc = row.crispr_id.split('_')[0]
-                crispr_id = row.crispr_id
-                start = int(row.array_start)
-                end = int(row.array_end)
-                length = int(row.contig_length)
+            # write extracted sequence to a new fasta file...
+            with open(extracted_path, 'w') as outfile:
+                SeqIO.write(extracted_seq, outfile, 'fasta')
+            logger.info(f"Wrote extracted CRISPR locus to {extracted_path}")
 
-                if acc in record_dict:  # then contig has crispr
-                    extracted_start = max(start-20000, 1)
-                    extracted_end = min(end+20000, length)
-                    extracted_len = extracted_end - extracted_start + 1
-                    extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
+            max_prot = max(int(row.protein_start), int(row.protein_end))
+            max_array = max(int(row.array_start), int(row.array_end))
 
-                    # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
-                    extracted_head = str(record_dict[acc].description)
-                    extracted_name = crispr_id + "_extracted.fa"
-                    extracted_path = Path(results_path, extracted_name)
+            # assuming no overlap
+            # if the array is downstream of the protein,
+            if max_array > max_prot:
+                dist = max_array - max_prot - int(row.array_length)
+            elif max_prot > max_array:
+                dist = max_prot - max_array - int(row.protein_length)
 
-                    # write extracted sequence to a new fasta file...
-                    with open(extracted_path, 'w') as outfile:
-                        SeqIO.write(extracted_seq, outfile, 'fasta')
+        else:  # then just extract header
+            extracted_head = str(record_dict[acc].description)
 
-                    logger.info(f"Wrote extracted CRISPR locus to {extracted_path}")
-
-            except Exception:
-                pass
-
-            extracted_heads.append(extracted_head)
-            extracted_paths.append(extracted_path)
+        extracted_heads.append(extracted_head)
+        extracted_paths.append(extracted_path)
+        distances.append(dist)
 
     # ...and add the header and filename to the summary dataframe
     summary.loc[:, 'extracted_header'] = extracted_heads
     summary.loc[:, 'extracted_filename'] = extracted_paths
+    summary.loc[:, 'distance_protein_and_array'] = distances
+
+    # reorder columns for readability
+    summary = summary[['protein_sequence',
+                       'accession_number',
+                       'extracted_header',
+                       'ortholog_match',
+                       'ppos',
+                       'pident',
+                       'bitscore',
+                       'evalue',
+                       'crispr_type',
+                       'crispr_id',
+                       'DR_found',
+                       'num_DRs',
+                       'DR_consensus_seq',
+                       'DR_consensus_length',
+                       'contig_length',
+                       'protein_start',
+                       'protein_end',
+                       'protein_length',
+                       'protein_frame',
+                       'array_start',
+                       'array_end',
+                       'array_length',
+                       'distance_protein_and_array',
+                       'array',
+                       'extracted_filename']]
 
     # write summary dataframe to csv
     with open(summary_csv_path, 'w') as f:
