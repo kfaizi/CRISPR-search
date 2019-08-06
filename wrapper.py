@@ -8,8 +8,6 @@ Accepts a single FASTA file.
 Generates an indexed nucleotide BLASTDB, searches it for ORFs matching a
 protein query using TBLASTN, and then checks hits for the presence of DRs
 with CRISPRFinder. The results are tabulated in a CSV file.
-
-This script is not well-optimized... yet ;)
 """
 
 __author__ = "Kian Faizi"
@@ -59,6 +57,7 @@ greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", r
 
 ######################## for interactivity, use: ###########################
 hello = greeter.parse_args()
+# python wcopy.py -in 'AAF' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '6'
 
 ######################## for hardcoded testing, use: ########################
 # hello = greeter.parse_args(['-i', 'A',
@@ -133,7 +132,7 @@ logger.setLevel(logging.DEBUG)
 
 sf = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-file = logging.FileHandler(filename=logname, filemode='a')
+file = logging.FileHandler(filename=logname, mode='a')
 file.setLevel(logging.DEBUG)
 file.setFormatter(sf)
 logger.addHandler(file)
@@ -142,6 +141,22 @@ console = logging.StreamHandler(stream='ext://sys.stdout')
 console.setLevel(logging.ERROR)
 console.setFormatter(sf)
 logger.addHandler(console)
+
+# define program-specific exceptions
+
+
+class NoBlastResultsException(Exception):
+    """Zero matches found by tblastn."""
+
+    pass
+
+
+class NoCrisprResultsException(Exception):
+    """Zero arrays found by CRISPRFinder."""
+
+    pass
+
+# define functions
 
 
 def move_script(path_to_script, path_to_copy):
@@ -207,6 +222,7 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
     skipcount = 0
 
     record = SeqIO.index(str(path_to_cat), 'fasta')
+    logger.info(f"There are {len(record)} sequences to dedupe...")
 
     for idx in record:
         id_split = idx.split('|')
@@ -215,6 +231,9 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
             acc = idx
         elif 'gb' in id_split:
             accindex = id_split.index('gb') + 1
+            acc = id_split[accindex]
+        elif 'dbj' in id_split:
+            accindex = id_split.index('dbj') + 1
             acc = id_split[accindex]
         else:
             logger.warning(f"Warning! Sequence id format unrecognized: {idx}")
@@ -225,7 +244,6 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
             else:  # then it's a duplicate; keep track
                 removed_accs[acc] = idx
         except Exception:
-            logger.warning(f"Warning! Sequence {idx} skipped.")
             skipcount += 1
             pass
 
@@ -239,6 +257,8 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
     with open(path_to_removed, 'w+') as remfile:
         for ids in removed_accs.values():
             SeqIO.write(record[ids], remfile, 'fasta')  # holds deleted seqs
+
+    return len(cleaned_accs), len(removed_accs)
 
     # try:  # deletes og fasta to make space. will validate b4 using this
     #     logger.info(f"Deleting original file {path_to_cat}")
@@ -309,19 +329,27 @@ def read_csv(path_to_csv):
     with open(path_to_csv, newline='') as f:
         ID_finder = csv.reader(f)
         output_list = []  # to be list of IDs
-        # next(ID_finder, None)  # skip the headers. Do not use for raw blast csv as it has none
         try:
             linecount = sum(1 for line in ID_finder)  # this iterates through the csv...
             logger.info(f"Working. There are {linecount} contig IDs to parse...")
+            if linecount == 0:  # then blast found no results
+                raise NoBlastResultsException("Blast returned no results; finishing up.")
             f.seek(0)  # ...so we need to move back to start
             ID_finder = csv.reader(f)  # reset generator
             for line in ID_finder:
                 output_list.append(line[0])  # make list of IDs
             return output_list
+
         except csv.Error as e:
             logger.critical(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
             texter.send_text(f"Failed {name}")
             sys.exit()
+
+        except NoBlastResultsException as e:
+            logger.info(e)
+            texter.send_text(f"All done {name}")
+            sys.exit()
+
         finally:
             if len(output_list) != linecount:
                 logger.critical("Error: initial and final line counts do not match! Exiting")
@@ -335,11 +363,13 @@ def list_csv(path_to_csv, path_to_new_IDs):
         try:
             output_list = read_csv(path_to_csv)
             logger.info(f"Writing IDs to text file {path_to_new_IDs}...")
+
             for ID in output_list:
                 f.write(f"{ID}\n")
             logger.info("Done!")
+
         except csv.Error as e:
-            logger.critical(f"Error writing accession data for {path_to_csv}: {e}")
+            logger.critical(f"Error parsing csv for {path_to_csv}: {e}")
             texter.send_text(f"Failed {name}")
             sys.exit()
 
@@ -399,63 +429,74 @@ def parseGffToDict(path_to_gff):  # ie results_path
         data = file.read()  # entire gff file
     data_split = data.split('\n\n')  # split into found crisprs
     data_split = list(filter(None, data_split))  # remove empty elements
-    num_crisprs = len(list(data_split))
+    num_crisprs = len(list(data_split)) - 1  # don't count '##gff-version 3' element
     results_dict.update({
         'num_crisprs': num_crisprs,
     })
     for section in data_split:  # for each found crispr section
-        # split into lines and remove top '##gff-version 3'
-        section_split = section.split('\n')
-        section_split = [line for line in section_split if '##' not in line]
-        for line_idx, line in enumerate(section_split):  # for each line in section
-            line_split = line.split('\t')
-            if line_idx == 0:  # first line is summary of found crispr
-                # from last element in line (attributes), get values
-                attr_split = line_split[-1].split(';')
+        try:
+            # split into lines and remove top '##gff-version 3'
+            section_split = section.split('\n')
+            section_split = [line for line in section_split if '##' not in line]
+            section_split_trim = list(filter(None, section_split))
 
-                dr_consensus_seq = attr_split[0][len('DR='):]
-                dr_consensus_length = attr_split[1][len('DR_length='):]
-                crispr_id = attr_split[-1][len('ID='):]  # ie 'parent'
+            if len(section_split_trim) == 0:
+                raise NoCrisprResultsException("CRISPRFinder returned no results; finishing up.")
+                break
 
-                # construct item to add to dictionary
-                dict_item = {
-                  'crispr_id': crispr_id,
-                  'genomic_accession': line_split[0],
-                  'crispr_type': line_split[2],
-                  'start': line_split[3],
-                  'end': line_split[4],
-                  'dr_consensus_seq': dr_consensus_seq,
-                  'dr_consensus_length': dr_consensus_length,
-                  'elements': []
-                }
+            for line_idx, line in enumerate(section_split):  # for each line in section
+                line_split = line.split('\t')
+                if line_idx == 0:  # first line is summary of found crispr
+                    # from last element in line (attributes), get values
+                    attr_split = line_split[-1].split(';')
 
-            else:  # other lines are found crispr elements (dr or spacer)
-                attr_split = line_split[-1].split(';')
+                    dr_consensus_seq = attr_split[0][len('DR='):]
+                    dr_consensus_length = attr_split[1][len('DR_length='):]
+                    crispr_id = attr_split[-1][len('ID='):]  # ie 'parent'
 
-                element_type = line_split[2]
-                element_start = line_split[3]
-                element_end = line_split[4]
+                    # construct item to add to dictionary
+                    dict_item = {
+                      'crispr_id': crispr_id,
+                      'genomic_accession': line_split[0],
+                      'crispr_type': line_split[2],
+                      'start': line_split[3],
+                      'end': line_split[4],
+                      'dr_consensus_seq': dr_consensus_seq,
+                      'dr_consensus_length': dr_consensus_length,
+                      'elements': []
+                    }
 
-                if element_type == 'CRISPRdr':
-                    dict_item['elements'].append({
-                      'element_type': element_type,
-                      'start': element_start,
-                      'end': element_end
-                    })
+                else:  # other lines are found crispr elements (dr or spacer)
+                    attr_split = line_split[-1].split(';')
 
-                elif element_type == 'CRISPRspacer':
-                    spacer_seq = attr_split[0][len('sequence='):]
-                    spacer_name = attr_split[1][len('name='):]
-                    dict_item['elements'].append({
-                      'element_type': element_type,
-                      'start': element_start,
-                      'end': element_end,
-                      'spacer_seq': spacer_seq,
-                      'spacer_name': spacer_name
-                    })
+                    element_type = line_split[2]
+                    element_start = line_split[3]
+                    element_end = line_split[4]
 
-        # add to crisprs list in dictionary
-        results_dict['crisprs_list'].append(dict_item)
+                    if element_type == 'CRISPRdr':
+                        dict_item['elements'].append({
+                          'element_type': element_type,
+                          'start': element_start,
+                          'end': element_end
+                        })
+
+                    elif element_type == 'CRISPRspacer':
+                        spacer_seq = attr_split[0][len('sequence='):]
+                        spacer_name = attr_split[1][len('name='):]
+                        dict_item['elements'].append({
+                          'element_type': element_type,
+                          'start': element_start,
+                          'end': element_end,
+                          'spacer_seq': spacer_seq,
+                          'spacer_name': spacer_name
+                        })
+
+            # add to crisprs list in dictionary
+            results_dict['crisprs_list'].append(dict_item)
+
+        except NoCrisprResultsException as e:
+            logger.info(e)
+            results_dict['crisprs_list'] = None
 
     return gff_file, results_dict
 
@@ -464,148 +505,156 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
     """Add headers, and append CF data."""
     # make blast csv into dataframe
     df_blast = pd.read_csv(path_to_blast_csv, dtype=object, header=None, names=sections_list, index_col=None)
-    df_blast['acc2'] = df_blast['saccver']
+    df_blast['acc2'] = df_blast['saccver']  # make duplicate accession column for later
 
-    # make parsed crisprfinder results into dataframe
-    d_crispr = results_dict['crisprs_list']
-    df_crispr = pd.DataFrame(d_crispr,
-                             dtype=object,
-                             columns=['genomic_accession',
-                                      'crispr_id',
-                                      'crispr_type',
-                                      'start',
-                                      'end',
-                                      'dr_consensus_seq',
-                                      'dr_consensus_length',
-                                      'elements'],
-                             index=None)
+    # send parsed crisprfinder results into dataframe
+    if results_dict['num_crisprs'] == 0:
+        # do stuff
+        pass
 
-    # make master dataframe. creates duplicates as needed to
-    # handle multiple hits from blast/crisprfinder/both
-    combo = pd.merge(df_blast, df_crispr, how='left', left_on='saccver', right_on='genomic_accession')
-    combo = combo.drop(columns='genomic_accession')  # redundant; use crispr_id
+    else:
+        d_crispr = results_dict['crisprs_list']
+        df_crispr = pd.DataFrame(d_crispr,
+                                 dtype=object,
+                                 columns=['genomic_accession',
+                                          'crispr_id',
+                                          'crispr_type',
+                                          'start',
+                                          'end',
+                                          'dr_consensus_seq',
+                                          'dr_consensus_length',
+                                          'elements'],
+                                 index=None)
 
-    # make new summary dataframe
-    summary = combo[['sseq',
-                     'acc2',
-                     'qseqid',
-                     'ppos',
-                     'pident',
-                     'crispr_type',
-                     'crispr_id',
-                     'dr_consensus_seq',
-                     'dr_consensus_length',
-                     'bitscore',
-                     'evalue',
-                     'slen',
-                     'sstart',
-                     'send',
-                     'start',
-                     'end',
-                     'elements']].copy()
+        # make master dataframe. creates duplicates as needed to
+        # handle multiple hits from blast/crisprfinder/both
+        combo = pd.merge(df_blast, df_crispr, how='left', left_on='saccver', right_on='genomic_accession')
+        combo = combo.drop(columns='genomic_accession')  # redundant; use crispr_id
 
-    # create columns w/ whether DR found (y/n) and if yes, how many
-    dr_status = []
-    dr_sum = []
+        # make new summary dataframe
+        summary = combo[['sseq',
+                         'acc2',
+                         'qseqid',
+                         'ppos',
+                         'pident',
+                         'crispr_type',
+                         'crispr_id',
+                         'dr_consensus_seq',
+                         'dr_consensus_length',
+                         'bitscore',
+                         'evalue',
+                         'slen',
+                         'sstart',
+                         'send',
+                         'length',
+                         'start',
+                         'end',
+                         'elements']].copy()
 
-    for eltup in summary[['dr_consensus_seq', 'elements']].itertuples():
-        dr_count = 0
-        dr_exists = 'no'
+        # create columns w/ whether DR found (y/n) and if yes, how many
+        dr_status = []
+        dr_sum = []
 
-        # if dr_consensus_seq is there, then DR was found
-        if isinstance(eltup.dr_consensus_seq, str):
-            dr_exists = 'yes'
+        for eltup in summary[['dr_consensus_seq', 'elements']].itertuples():
+            dr_count = 0
+            dr_exists = 'no'
 
-        dr_status.append(dr_exists)
+            # if dr_consensus_seq is there, then DR was found
+            if isinstance(eltup.dr_consensus_seq, str):
+                dr_exists = 'yes'
 
-        try:
-            for dictx in eltup.elements:
-                for v in dictx.values():
-                    if v == "CRISPRdr":
-                        dr_count += 1
-        except Exception:
-            pass
+            dr_status.append(dr_exists)
 
-        dr_sum.append(dr_count)
+            try:
+                for dictx in eltup.elements:
+                    for v in dictx.values():
+                        if v == "CRISPRdr":
+                            dr_count += 1
+            except Exception:
+                pass
 
-    # add columns to summary
-    summary.loc[:, 'DR_found'] = dr_status
-    summary.loc[:, 'num_DRs'] = dr_sum
+            dr_sum.append(dr_count)
 
-    # reorder columns for readability
-    summary = summary[['sseq',
-                       'acc2',
-                       'qseqid',
-                       'ppos',
-                       'pident',
-                       'bitscore',
-                       'evalue',
-                       'crispr_type',
-                       'crispr_id',
-                       'DR_found',
-                       'num_DRs',
-                       'dr_consensus_seq',
-                       'dr_consensus_length',
-                       'slen',
-                       'sstart',
-                       'send',
-                       'start',
-                       'end',
-                       'elements']]
+        # add columns to summary
+        summary.loc[:, 'DR_found'] = dr_status
+        summary.loc[:, 'num_DRs'] = dr_sum
 
-    # rename columns more intuitively
-    summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
-                                      'acc2': 'accession_number',
-                                      'slen': 'contig_length',
-                                      'qseqid': 'ortholog_match',
-                                      'dr_consensus_seq': 'DR_consensus_seq',
-                                      'dr_consensus_length': 'DR_consensus_length',
-                                      'sstart': 'protein_start',
-                                      'send': 'protein_end',
-                                      'start': 'array_start',
-                                      'end': 'array_end',
-                                      'elements': 'array'})
+        # reorder columns for readability
+        summary = summary[['sseq',
+                           'acc2',
+                           'qseqid',
+                           'ppos',
+                           'pident',
+                           'bitscore',
+                           'evalue',
+                           'crispr_type',
+                           'crispr_id',
+                           'DR_found',
+                           'num_DRs',
+                           'dr_consensus_seq',
+                           'dr_consensus_length',
+                           'slen',
+                           'sstart',
+                           'send',
+                           'length',
+                           'start',
+                           'end',
+                           'elements']]
 
-    # parse contigs for subsequent extraction, without overloading memory
-    record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
+        # rename columns more intuitively
+        summary = summary.rename(columns={'sseq': 'protein_sequence',  # only aligned part
+                                          'acc2': 'accession_number',
+                                          'slen': 'contig_length',
+                                          'qseqid': 'ortholog_match',
+                                          'dr_consensus_seq': 'DR_consensus_seq',
+                                          'dr_consensus_length': 'DR_consensus_length',
+                                          'sstart': 'protein_start',
+                                          'send': 'protein_end',
+                                          'length': 'protein_length',
+                                          'start': 'array_start',
+                                          'end': 'array_end',
+                                          'elements': 'array'})
 
-    # extract up to +/- 20kb flanking sequence around crispr locus
-    extracted_heads = []
-    extracted_paths = []
+        # parse contigs for subsequent extraction, without overloading memory
+        record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
 
-    for row in summary.itertuples():
-        extracted_head = None
-        extracted_path = None
+        # extract up to +/- 20kb flanking sequence around crispr locus
+        extracted_heads = []
+        extracted_paths = []
 
-        try:
-            acc = row.crispr_id.split('_')[0]
-            crispr_id = row.crispr_id
-            start = int(row.array_start)
-            end = int(row.array_end)
-            length = int(row.contig_length)
+        for row in summary.itertuples():
+            extracted_head = None
+            extracted_path = None
 
-            if acc in record_dict:  # then contig has crispr
-                extracted_start = max(start-20000, 1)
-                extracted_end = min(end+20000, length)
-                extracted_len = extracted_end - extracted_start + 1
-                extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
+            try:
+                acc = row.crispr_id.split('_')[0]
+                crispr_id = row.crispr_id
+                start = int(row.array_start)
+                end = int(row.array_end)
+                length = int(row.contig_length)
 
-                # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
-                extracted_head = str(record_dict[acc].description)
-                extracted_name = crispr_id + "_extracted.fa"
-                extracted_path = Path(results_path, extracted_name)
+                if acc in record_dict:  # then contig has crispr
+                    extracted_start = max(start-20000, 1)
+                    extracted_end = min(end+20000, length)
+                    extracted_len = extracted_end - extracted_start + 1
+                    extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
 
-                # write extracted sequence to a new fasta file...
-                with open(extracted_path, 'w') as outfile:
-                    SeqIO.write(extracted_seq, outfile, 'fasta')
+                    # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
+                    extracted_head = str(record_dict[acc].description)
+                    extracted_name = crispr_id + "_extracted.fa"
+                    extracted_path = Path(results_path, extracted_name)
 
-                logger.info(f"Wrote extracted CRISPR locus to {extracted_path}")
+                    # write extracted sequence to a new fasta file...
+                    with open(extracted_path, 'w') as outfile:
+                        SeqIO.write(extracted_seq, outfile, 'fasta')
 
-        except Exception:
-            pass
+                    logger.info(f"Wrote extracted CRISPR locus to {extracted_path}")
 
-        extracted_heads.append(extracted_head)
-        extracted_paths.append(extracted_path)
+            except Exception:
+                pass
+
+            extracted_heads.append(extracted_head)
+            extracted_paths.append(extracted_path)
 
     # ...and add the header and filename to the summary dataframe
     summary.loc[:, 'extracted_header'] = extracted_heads
@@ -637,7 +686,6 @@ def wrapper():
         logger.info(f"Extracting zipped fastas {hello.input_name}...")
         unzip_fasta(gz_extractor_path, zip_path, genomes_path)
         logger.info(f"Success! Unzipped fastas to {genomes_path}")
-        texter.send_text(f"extracted {name}")
     except subprocess.CalledProcessError as e:
         logger.critical(f"Error extracting zipped fastas: {e}")
         texter.send_text(f"Failed {name}")
@@ -647,7 +695,6 @@ def wrapper():
         logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
         cat_and_cut(genomes_path, genome_path)
         logger.info(f"Success! New file created at {genome_path}")
-        texter.send_text(f"concatenated {name}")
     except subprocess.CalledProcessError as e:
         logger.critical(f"Error combining and/or deleting fastas: {e}")
         texter.send_text(f"Failed {name}")
@@ -655,8 +702,8 @@ def wrapper():
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path}...")
-        dedupe_fasta(genome_path, cleaned_path, removed_path)
-        logger.info(f"Success! Cleaned fasta created at {cleaned_path}, with the removed seqs saved at {removed_path}")
+        num_saved, num_removed = dedupe_fasta(genome_path, cleaned_path, removed_path)
+        logger.info(f"Success! Cleaned fasta created at {cleaned_path}. There were {num_saved} unique sequences with {num_removed} duplicates, which are saved at {removed_path}")
         texter.send_text(f"deduped {name}")
     except Exception as e:
         logger.critical(f"Error deduping: {e}")
@@ -729,7 +776,7 @@ def wrapper():
         sys.exit()
 
     try:  # parse the gff output
-        logger.info(f"Parsing the CRISPRFinder output...")
+        logger.info("Parsing the CRISPRFinder output...")
         gff_file, results_dict = parseGffToDict(results_path)
         logger.info(f"Success! Parsed gff {gff_file} to dict")
     except Exception as e:
@@ -754,3 +801,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.error("Keyboard interrupt")
         sys.exit()
+
+
+
+
