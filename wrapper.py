@@ -145,35 +145,35 @@ logger.addHandler(console)
 # define functions
 
 
-def move_script(path_to_script, path_to_copy):
+def move_script(script, copy):
     """To avoid CF errors, make a copy of it in each output directory."""
     subprocess.run(["cp",
-                    f"{path_to_script}",
-                    f"{path_to_copy}"],
+                    f"{script}",
+                    f"{copy}"],
                    cwd="/",
                    check=True)
 
 
-def unzip_fasta(path_to_gz_extractor, path_to_zipped, path_to_dest):
+def unzip_fasta(gz_extractor, zipped, unzipped):
     """(G)unzip compressed fasta files."""
     subprocess.run(["bash",
-                    f"{path_to_gz_extractor}",
-                    f"{path_to_zipped}",
-                    f"{path_to_dest}"],
+                    f"{gz_extractor}",
+                    f"{zipped}",
+                    f"{unzipped}"],
                    cwd="/",
                    check=True)
 
 
-def cat_and_cut(path_to_fastas, path_to_cat):
+def cat_and_cut(lone, grouped):
     """Concatenate unzipped fastas, delete source."""
     cat_list = []
 
-    for fa in sorted(path_to_fastas.glob("*.fsa_nt")):  # genomes_path
+    for fa in sorted(lone.glob("*.fsa_nt")):  # genomes_path
         cat_list.append(fa)
 
     combine = (['cat'] + cat_list)
 
-    with open(path_to_cat, "w") as outfile:  # genome_path
+    with open(grouped, "w") as outfile:  # genome_path
         try:  # create master file...
             numfiles = str(len(cat_list))
             logger.info(f"Working. There are {numfiles} files to merge...")
@@ -201,13 +201,13 @@ def cat_and_cut(path_to_fastas, path_to_cat):
         sys.exit()
 
 
-def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
+def dedupe_fasta(cat, cleaned, removed):
     """Dedupe fasta by sequence id."""
     cleaned_accs = {}
     removed_accs = {}
     skipcount = 0
 
-    record = SeqIO.index(str(path_to_cat), 'fasta')
+    record = SeqIO.index(str(cat), 'fasta')
     logger.info(f"There are {len(record)} sequences to dedupe...")
 
     for idx in record:
@@ -232,14 +232,14 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
         elif acc in cleaned_accs:  # then it's a duplicate; keep track
             removed_accs[acc] = idx
 
-    with open(path_to_new_cat, 'w+') as cleanfile:
+    with open(cleaned, 'w+') as cleanfile:
         for ids in cleaned_accs.values():
             SeqIO.write(record[ids], cleanfile, 'fasta')  # new deduped fasta
 
         if skipcount >= 1:
             logger.warning(f"Warning! Skipped {skipcount} sequences.")
 
-    with open(path_to_removed, 'w+') as remfile:
+    with open(removed, 'w+') as remfile:
         for ids in removed_accs.values():
             SeqIO.write(record[ids], remfile, 'fasta')  # holds deleted seqs
 
@@ -257,18 +257,18 @@ def dedupe_fasta(path_to_cat, path_to_new_cat, path_to_removed):
     #     sys.exit()
 
 
-def make_db(path_to_fasta, path_to_new_database):
+def make_db(fasta, db):
     """Concatenated fasta > parsed blastdb."""
     p = subprocess.run(["makeblastdb",
                         "-in",
-                        f"{path_to_fasta}",  # in ~/genomes/
+                        f"{fasta}",  # in ~/genomes/
                         "-parse_seqids",
                         "-max_file_sz",
                         "4GB",
                         "-dbtype",
                         "nucl",
                         "-out",
-                        f"{path_to_new_database}"],
+                        f"{db}"],
                        cwd="/",
                        text=True,
                        capture_output=True,
@@ -277,41 +277,41 @@ def make_db(path_to_fasta, path_to_new_database):
     logger.info(results)
 
 
-def search_db(path_to_database, path_to_query, path_to_new_archive, threads):
+def search_db(db, query, archive, threads):
     """Blastdb + query > hits in ASN.1 format."""
     subprocess.run(["tblastn",
                     "-db",
-                    f"{path_to_database}",  # feed arg from make_db()
+                    f"{db}",
                     "-query",
-                    f"{path_to_query}",  # known protein reference
+                    f"{query}",  # known protein reference
                     "-out",
-                    f"{path_to_new_archive}",  # name, to differentiate results
+                    f"{archive}",
                     "-evalue",
                     "10",  # could go bigger...
                     "-num_threads",
                     f"{threads}",
-                    "-outfmt",  # need to make dir if not existing already?
+                    "-outfmt",
                     "11"],  # ASN.1
                    cwd="/",
                    check=True)
 
 
-def make_csv(path_to_archive, path_to_new_csv):
+def make_csv(archive, csvfile):
     """ASN.1 > csv with headers."""
     subprocess.run(["blast_formatter",
                     "-archive",
-                    f"{path_to_archive}",  # path to ASN.1 from search_db()
+                    f"{archive}",
                     "-outfmt",
                     sections,
                     "-out",
-                    f"{path_to_new_csv}"],
+                    f"{csvfile}"],
                    cwd="/",
                    check=True)
 
 
-def read_csv(path_to_csv):
+def read_csv(csvfile):
     """Get accession IDs from csv."""
-    with open(path_to_csv, newline='') as f:
+    with open(csvfile, newline='') as f:
         ID_finder = csv.reader(f)
         output_list = []  # to be list of IDs
         try:
@@ -330,7 +330,7 @@ def read_csv(path_to_csv):
                 return output_list
 
         except csv.Error as e:
-            logger.critical(f"Error gathering accession data for {path_to_csv}, line {ID_finder.line_num}: {e}")
+            logger.critical(f"Error gathering accession data for {csvfile}, line {ID_finder.line_num}: {e}")
             texter.send_text(f"Failed {name}")
             sys.exit()
 
@@ -341,43 +341,43 @@ def read_csv(path_to_csv):
                 sys.exit()
 
 
-def list_csv(path_to_csv, path_to_new_IDs):
+def list_csv(csvfile, accessions):
     """Write accession IDs to .txt, creating one if it doesn't exist."""
-    with open(path_to_new_IDs, 'w+', newline='') as f:
+    with open(accessions, 'w+', newline='') as f:
         try:
-            output_list = read_csv(path_to_csv)
-            logger.info(f"Writing IDs to text file {path_to_new_IDs}...")
+            output_list = read_csv(csvfile)
+            logger.info(f"Writing IDs to text file {accessions}...")
 
             for ID in output_list:
                 f.write(f"{ID}\n")
             logger.info("Done!")
 
         except csv.Error as e:
-            logger.critical(f"Error parsing csv for {path_to_csv}: {e}")
+            logger.critical(f"Error parsing csv for {csvfile}: {e}")
             texter.send_text(f"Failed {name}")
             sys.exit()
 
 
-def extract_contigs(path_to_database, path_to_IDs, path_to_new_contigs):
+def extract_contigs(db, accessions, contigs):
     """Extract contigs by referencing sseqids to blastdb."""
     subprocess.run(["blastdbcmd",
                     "-db",
-                    f"{path_to_database}",  # parent
+                    f"{db}",  # parent
                     "-dbtype",
                     "nucl",
                     "-entry_batch",
-                    f"{path_to_IDs}",  # list of sseqids to extract
+                    f"{accessions}",  # list of sseqids to extract
                     "-out",
-                    f"{path_to_new_contigs}"],
+                    f"{contigs}"],
                    cwd="/",
                    check=True)
 
 
-def dedupe_contigs(path_to_contigs, path_to_new_contigs):
+def dedupe_contigs(contigs, dedupe):
     """Dedupe fasta by sequence; from https://www.biostars.org/p/3003/."""
     all_seqs = set()
-    with open(path_to_contigs, 'r') as infile:
-        with open(path_to_new_contigs, 'w+') as outfile:
+    with open(contigs, 'r') as infile:
+        with open(dedupe, 'w+') as outfile:
             head = None
             for h, lines in groupby(infile, lambda x: x.startswith('>')):
                 if h:
@@ -389,13 +389,13 @@ def dedupe_contigs(path_to_contigs, path_to_new_contigs):
                         outfile.write(f"{head}{seq}")
 
 
-def find_CRISPRs(path_to_crisprfinder, path_to_contigs, path_to_new_gff):
+def find_CRISPRs(cf, contigs, gff):
     """Search extracted contigs for DRs; retain output."""
     # make cwd same as CF's to prevent bug
     p = subprocess.run(["perl",
-                        f"{path_to_crisprfinder}",
-                        f"{path_to_contigs}",
-                        f"{path_to_new_gff}"],
+                        f"{cf}",
+                        f"{contigs}",
+                        f"{gff}"],
                        cwd=output_path,  # prevent bug
                        capture_output=True,
                        text=True,
@@ -404,10 +404,10 @@ def find_CRISPRs(path_to_crisprfinder, path_to_contigs, path_to_new_gff):
     logger.info(results)
 
 
-def parseGffToDict(path_to_gff):  # ie results_path
+def parseGffToDict(gff):  # ie results_path
     """Take gff filename, return parsed dict. Adapted from PDH."""
     # dict will be populated with crispr array info from gff
-    gff_file = sorted(path_to_gff.glob("*.gff"))[0]  # find actual gff file
+    gff_file = sorted(gff.glob("*.gff"))[0]  # find actual gff file
     results_dict = {'crisprs_list': []}
     with open(gff_file) as file:
         data = file.read()  # entire gff file
@@ -415,7 +415,7 @@ def parseGffToDict(path_to_gff):  # ie results_path
     data_split = data.split('\n\n')  # split into found crisprs
     data_split = list(filter(None, data_split))  # remove empty elements
 
-    if data_split == ['##gff-version 3\n']:
+    if data_split == ['##gff-version 3\n']:  # then no results
         logger.info("CRISPRFinder found no hits.")
         results_dict['crisprs_list'] = None
         results_dict['num_crisprs'] = 0
@@ -478,10 +478,10 @@ def parseGffToDict(path_to_gff):  # ie results_path
     return gff_file, results_dict
 
 
-def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
+def update_csv(results_dict, blast_csv, summary_csv):
     """Add headers, and append CF data."""
     # make blast csv into dataframe
-    df_blast = pd.read_csv(path_to_blast_csv, dtype=object, header=None, names=sections_list, index_col=None)
+    df_blast = pd.read_csv(blast_csv, dtype=object, header=None, names=sections_list, index_col=None)
     df_blast['acc2'] = df_blast['saccver']  # make duplicate accession column to preserve after merge
 
     # send parsed crisprfinder results into dataframe
@@ -489,7 +489,7 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
         # do stuff:
         # add fasta headers to every row of blast hits.
         # make all the columns in the usual summary, but empty.
-        # add the DR_found column with 'no's (integrate with below somehow?)
+        # add the DR_found column with no's
         # return it.
         new_cols = ['sseq',
                     'acc2',
@@ -510,7 +510,8 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                     'start',
                     'end',
                     'elements']
-        summary = df_blast.reindex(columns=new_cols, copy=True)  # may need to be [new_cols]
+
+        summary = df_blast.reindex(columns=new_cols, copy=True)
 
     else:
         d_crispr = results_dict['crisprs_list']
@@ -560,19 +561,21 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
     for eltup in summary[['dr_consensus_seq', 'elements', 'start', 'end']].itertuples():
         dr_count = 0
         dr_exists = 'no'
+        array_len = 0
 
         # if dr_consensus_seq is there, then DR was found
         if isinstance(eltup.dr_consensus_seq, str):
             dr_exists = 'yes'
+
+            array_len = abs(int(eltup.end) - int(eltup.start)) + 1
+
+            for dictx in eltup.elements:
+                for v in dictx.values():
+                    if v == "CRISPRdr":
+                        dr_count += 1
+
         dr_status.append(dr_exists)
-
-        for dictx in eltup.elements:
-            for v in dictx.values():
-                if v == "CRISPRdr":
-                    dr_count += 1
         dr_sum.append(dr_count)
-
-        array_len = abs(int(eltup.end) - int(eltup.start)) + 1
         array_lens.append(array_len)
 
     # add columns to summary
@@ -606,17 +609,17 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
         extracted_head = None
         extracted_path = None
         dist = None  # protein-array distance (nt)
+        acc = row.accession_number
 
-        if row.DR_exists == "yes":  # then extract flanking sequence
+        if row.DR_found == "yes":  # then extract flanking sequence
 
             crispr_id = row.crispr_id
-            acc = crispr_id.split('_')[0]
 
             extracted_start = max(int(row.array_start)-20000, 1)
             extracted_end = min(int(row.array_end)+20000, int(row.contig_length))
-            extracted_len = extracted_end - extracted_start + 1
+            # extracted_len = extracted_end - extracted_start + 1
             extracted_seq = (record_dict[acc])[extracted_start-1: extracted_end]
-            # # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
+            # print('For', acc, 'start at', extracted_start, 'and end at', extracted_end, '. The seq is', length, 'long, of which we\'re taking', extracted_len)
             extracted_head = str(record_dict[acc].description)
             extracted_name = crispr_id + "_extracted.fa"
             extracted_path = Path(results_path, extracted_name)
@@ -629,10 +632,11 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
             max_prot = max(int(row.protein_start), int(row.protein_end))
             max_array = max(int(row.array_start), int(row.array_end))
 
-            # assuming no overlap
+            # clearly, assuming no overlap
             # if the array is downstream of the protein,
             if max_array > max_prot:
                 dist = max_array - max_prot - int(row.array_length)
+            # else if the protein is downstream of the array,
             elif max_prot > max_array:
                 dist = max_prot - max_array - int(row.protein_length)
 
@@ -655,8 +659,8 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                        'ortholog_match',
                        'ppos',
                        'pident',
-                       'bitscore',
                        'evalue',
+                       'bitscore',
                        'crispr_type',
                        'crispr_id',
                        'DR_found',
@@ -675,8 +679,11 @@ def update_csv(results_dict, path_to_blast_csv, path_to_new_csv):
                        'array',
                        'extracted_filename']]
 
+    # and drop the redundant accessions (they're in the headers)
+    summary = summary.drop(columns='accession_number')
+
     # write summary dataframe to csv
-    with open(summary_csv_path, 'w') as f:
+    with open(summary_csv, 'w') as f:
         summary.to_csv(f, mode='w', index=False, header=True)
 
 
@@ -719,7 +726,6 @@ def wrapper():
         logger.info(f"Deduplicating sequences in {genome_path}...")
         num_saved, num_removed = dedupe_fasta(genome_path, cleaned_path, removed_path)
         logger.info(f"Success! Cleaned fasta created at {cleaned_path}. There were {num_saved} unique sequences with {num_removed} duplicates, which are saved at {removed_path}")
-        texter.send_text(f"deduped {name}")
     except Exception as e:
         logger.critical(f"Error deduping: {e}")
         texter.send_text(f"Failed {name}")
@@ -729,7 +735,6 @@ def wrapper():
         logger.info(f"Making blastdb {name}...")
         make_db(cleaned_path, blastdb_path)
         logger.info(f"Success! Blast database created at {blastdb_path}")
-        texter.send_text(f"made db {name}")
     except subprocess.CalledProcessError as e:
         logger.critical(f"Error making blastdb: {e}")
         texter.send_text(f"Failed {name}")
@@ -739,7 +744,6 @@ def wrapper():
         logger.info(f"Blasting proteins in {query_path} against {name} with {hello.threads} threads...")
         search_db(blastdb_path, query_path, archive_path, hello.threads)
         logger.info(f"Success! Blast results written to {archive_path}")
-        texter.send_text(f"blasted {name}")
     except subprocess.CalledProcessError as e:
         logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}")
         texter.send_text(f"Failed {name}")
@@ -803,7 +807,7 @@ def wrapper():
         logger.info(f"Updating the .csv at {csv_path} with new info...")
         update_csv(results_dict, csv_path, summary_csv_path)
         logger.info(f"Success! Final output file located at {summary_csv_path}")
-        texter.send_text(f"All done {name}")
+        texter.send_text(f"Done {name}")
     except Exception as e:
         logger.critical(f"Error updating .csv at {csv_path}: {e}")
         texter.send_text(f"Failed {name}")
@@ -816,7 +820,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.error("Keyboard interrupt")
         sys.exit()
-
-
-
-
