@@ -28,7 +28,7 @@ import texter
 import signal
 
 from pathlib import Path
-from itertools import groupby
+# from itertools import groupby
 from Bio import SeqIO
 
 # in working directory with CF + query, create blastdb/ and genomes/.
@@ -56,17 +56,25 @@ greeter.add_argument("-s", "--script", help="Name of CRISPRFinder script file.",
 greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", required=True)
 
 ######################## for interactivity, use: ###########################
-hello = greeter.parse_args()
+# hello = greeter.parse_args()
 # python wcopy.py -in 'AAF' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '6'
 
 ######################## for hardcoded testing, use: ########################
-# hello = greeter.parse_args(['-i', 'A',
-#                             '-w', '~/search/',  # use pathlib to avoid / errors
-#                             '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
-#                             '-g', '~/search/genomes/',
+hello = greeter.parse_args(['-i', 'AAA',
+                            '-w', '~/search/',  # use pathlib to avoid / errors
+                            '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
+                            '-g', '~/search/genomes/',
+                            '-q', 'Cas13d_proteins.fa',
+                            '-s', 'cf_v2.pl',
+                            '-t', '8'])
+
+# hello = greeter.parse_args(['-i', 'AAA',
+#                             '-w', '~/meethere/search/',  # use pathlib to avoid / errors
+#                             '-b', '~/meethere/search/blastdb/',  # use pathlib to avoid / errors
+#                             '-g', '~/meethere/search/genomes/',
 #                             '-q', 'Cas13d_proteins.fa',
 #                             '-s', 'cf_v2.pl',
-#                             '-t', '8'])
+#                             '-t', '2'])
 
 # catch sigints
 signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -111,9 +119,6 @@ accessions_path = Path(output_path, accessions_name).with_suffix(".txt")
 contigs_name = name + "_hits"
 contigs_path = Path(output_path, "in", contigs_name).with_suffix(".fa").resolve()
 (contigs_path.parent).mkdir(parents=True, exist_ok=True)
-
-dedupe_name = name + "_dedupe"
-dedupe_path = Path(contigs_path.parent, dedupe_name).with_suffix(".fa")
 
 results_name = name + "_crisprs"
 results_path = Path(output_path, results_name)
@@ -201,7 +206,7 @@ def cat_and_cut(lone, grouped):
         sys.exit()
 
 
-def dedupe_fasta(cat, cleaned, removed):
+def fast_dedupe(cat, cleaned, removed):
     """Dedupe fasta by sequence id."""
     cleaned_accs = {}
     removed_accs = {}
@@ -215,12 +220,10 @@ def dedupe_fasta(cat, cleaned, removed):
 
         if len(id_split) == 1:  # then it's an accession
             acc = idx
-        elif 'gb' in id_split:
-            accindex = id_split.index('gb') + 1
-            acc = id_split[accindex]
-        elif 'dbj' in id_split:
-            accindex = id_split.index('dbj') + 1
-            acc = id_split[accindex]
+        elif len(id_split) == 3:  # form "dbj|AAAAAnnn|"
+            acc = id_split[1]
+        elif len(id_split) == 5:  # form "gb|123|dbj|AAAAAnnn|"
+            acc = id_split[3]
         else:
             logger.warning(f"Warning! Sequence id format unrecognized: {idx}")
             acc = None
@@ -373,20 +376,20 @@ def extract_contigs(db, accessions, contigs):
                    check=True)
 
 
-def dedupe_contigs(contigs, dedupe):
-    """Dedupe fasta by sequence; from https://www.biostars.org/p/3003/."""
-    all_seqs = set()
-    with open(contigs, 'r') as infile:
-        with open(dedupe, 'w+') as outfile:
-            head = None
-            for h, lines in groupby(infile, lambda x: x.startswith('>')):
-                if h:
-                    head = next(lines)
-                else:
-                    seq = ''.join(lines)
-                    if seq not in all_seqs:
-                        all_seqs.add(seq)
-                        outfile.write(f"{head}{seq}")
+# def deep_dedupe(contigs, dedupe):
+#     """Dedupe fasta by sequence; from https://www.biostars.org/p/3003/."""
+#     all_seqs = set()
+#     with open(contigs, 'r') as infile:
+#         with open(dedupe, 'w+') as outfile:
+#             head = None
+#             for h, lines in groupby(infile, lambda x: x.startswith('>')):
+#                 if h:
+#                     head = next(lines)
+#                 else:
+#                     seq = ''.join(lines)
+#                     if seq not in all_seqs:
+#                         all_seqs.add(seq)
+#                         outfile.write(f"{head}{seq}")
 
 
 def find_CRISPRs(cf, contigs, gff):
@@ -599,7 +602,7 @@ def update_csv(results_dict, blast_csv, summary_csv):
                                       'elements': 'array'})
 
     # parse contigs for subsequent extraction, without overloading memory
-    record_dict = SeqIO.index(str(dedupe_path), 'fasta')  # can't handle pure paths
+    record_dict = SeqIO.index(str(contigs_path), 'fasta')  # can't handle pure paths
     # extract up to +/- 20kb flanking sequence around crispr locus
     extracted_heads = []
     extracted_paths = []
@@ -718,16 +721,16 @@ def wrapper():
         cat_and_cut(genomes_path, genome_path)
         logger.info(f"Success! New file created at {genome_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error combining and/or deleting fastas: {e}")
+        logger.critical(f"Error combining and/or deleting fastas: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path}...")
-        num_saved, num_removed = dedupe_fasta(genome_path, cleaned_path, removed_path)
+        num_saved, num_removed = fast_dedupe(genome_path, cleaned_path, removed_path)
         logger.info(f"Success! Cleaned fasta created at {cleaned_path}. There were {num_saved} unique sequences with {num_removed} duplicates, which are saved at {removed_path}")
     except Exception as e:
-        logger.critical(f"Error deduping: {e}")
+        logger.critical(f"Error deduping: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -736,7 +739,7 @@ def wrapper():
         make_db(cleaned_path, blastdb_path)
         logger.info(f"Success! Blast database created at {blastdb_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error making blastdb: {e}")
+        logger.critical(f"Error making blastdb: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -745,7 +748,7 @@ def wrapper():
         search_db(blastdb_path, query_path, archive_path, hello.threads)
         logger.info(f"Success! Blast results written to {archive_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}")
+        logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}, exc_info=True")
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -754,7 +757,7 @@ def wrapper():
         make_csv(archive_path, csv_path)
         logger.info(f"Success! New .csv file created at {csv_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error creating .csv file from the archive at {archive_path}: {e}")
+        logger.critical(f"Error creating .csv file from the archive at {archive_path}: {e}, exc_info=True")
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -763,7 +766,7 @@ def wrapper():
         list_csv(csv_path, accessions_path)
         logger.info(f"Success! Accession list created at {accessions_path}")
     except Exception as e:
-        logger.critical(f"Error creating accession list at {accessions_path}: {e}")
+        logger.critical(f"Error creating accession list at {accessions_path}: {e}, exc_info=True")
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -772,44 +775,43 @@ def wrapper():
         extract_contigs(blastdb_path, accessions_path, contigs_path)
         logger.info(f"Success! Contigs extracted to {contigs_path}")
     except Exception as e:
-        logger.critical(f"Error extracting contigs to {contigs_path}: {e}")
+        logger.critical(f"Error extracting contigs to {contigs_path}: {e}, exc_info=True")
         texter.send_text(f"Failed {name}")
         sys.exit()
 
-    try:  # deduplicate the contigs fasta
-        logger.info(f"Deduplicating BLAST hits at {contigs_path}...")
-        dedupe_contigs(contigs_path, dedupe_path)
-        logger.info(f"Success! Contigs deduplicated and moved to {dedupe_path}")
-    except Exception as e:
-        logger.critical(f"Error deduplicating contigs at {contigs_path}: {e}")
-        texter.send_text(f"Failed {name}")
-        sys.exit()
+    # print('remake')
 
     try:  # search 'em with crisprfinder
-        logger.info(f"Searching sequences in {dedupe_path} for DRs...")
-        find_CRISPRs(script_path, dedupe_path, results_path)
+        logger.info(f"Searching sequences in {contigs_path} for DRs...")
+        find_CRISPRs(script_path, contigs_path, results_path)
         logger.info(f"Success! CRISPRFinder output created at {results_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error searching for DRs: {e}")
+        logger.critical(f"Error searching for DRs: {e}, exc_info=True")
         texter.send_text(f"Failed {name}")
         sys.exit()
+
+    # logger.info("Remaking output with improved summary format...")
 
     try:  # parse the gff output
         logger.info("Parsing the CRISPRFinder output...")
+        print('parsing gff')
         gff_file, results_dict = parseGffToDict(results_path)
         logger.info(f"Success! Parsed gff {gff_file} to dict")
     except Exception as e:
-        logger.critical(f"Error parsing results at {results_path}: {e}")
+        print('gff parse failed:', e)
+        logger.critical(f"Error parsing results at {results_path}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
     try:  # update the csv
+        print('updating')
         logger.info(f"Updating the .csv at {csv_path} with new info...")
         update_csv(results_dict, csv_path, summary_csv_path)
         logger.info(f"Success! Final output file located at {summary_csv_path}")
         texter.send_text(f"Done {name}")
     except Exception as e:
-        logger.critical(f"Error updating .csv at {csv_path}: {e}")
+        print('update failed:', e)
+        logger.critical(f"Error updating .csv at {csv_path}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
