@@ -188,7 +188,7 @@ def cat_and_cut(lone, grouped):
                            check=True)
             logger.info("Done.")
         except subprocess.CalledProcessError as e:
-            logger.critical(f"Error combining files: {e}")
+            logger.critical(f"Error combining files: {e}", exc_info=True)
             texter.send_text(f"Failed {name}")
             sys.exit()
 
@@ -201,7 +201,7 @@ def cat_and_cut(lone, grouped):
                        check=True)
         logger.info("Done.")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error removing redundant individual files: {e}")
+        logger.critical(f"Error removing redundant individual files: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -333,7 +333,7 @@ def read_csv(csvfile):
                 return output_list
 
         except csv.Error as e:
-            logger.critical(f"Error gathering accession data for {csvfile}, line {ID_finder.line_num}: {e}")
+            logger.critical(f"Error gathering accession data for {csvfile}, line {ID_finder.line_num}: {e}", exc_info=True)
             texter.send_text(f"Failed {name}")
             sys.exit()
 
@@ -356,7 +356,7 @@ def list_csv(csvfile, accessions):
             logger.info("Done!")
 
         except csv.Error as e:
-            logger.critical(f"Error parsing csv for {csvfile}: {e}")
+            logger.critical(f"Error parsing csv for {csvfile}: {e}", exc_info=True)
             texter.send_text(f"Failed {name}")
             sys.exit()
 
@@ -696,14 +696,14 @@ def wrapper():
         texter.send_text(f"Starting search on {name}")
         logger.info("Starting...")
     except Exception as e:
-        logger.error(f"Something went wrong while starting: {e}")
+        logger.error(f"Something went wrong while starting: {e}", exc_info=True)
         texter.send_text(f"Startup {name} failed :(")
         sys.exit()
 
     try:  # copy CF to each result dir to avoid error
         move_script(og_script_path, script_path)
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error initializing file structure: {e}")
+        logger.critical(f"Error initializing file structure: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -712,7 +712,7 @@ def wrapper():
         unzip_fasta(gz_extractor_path, zip_path, genomes_path)
         logger.info(f"Success! Unzipped fastas to {genomes_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error extracting zipped fastas: {e}")
+        logger.critical(f"Error extracting zipped fastas: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -748,7 +748,7 @@ def wrapper():
         search_db(blastdb_path, query_path, archive_path, hello.threads)
         logger.info(f"Success! Blast results written to {archive_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}, exc_info=True")
+        logger.critical(f"Error blasting {query_path} against blastdb {name}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -757,7 +757,7 @@ def wrapper():
         make_csv(archive_path, csv_path)
         logger.info(f"Success! New .csv file created at {csv_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error creating .csv file from the archive at {archive_path}: {e}, exc_info=True")
+        logger.critical(f"Error creating .csv file from the archive at {archive_path}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -766,7 +766,7 @@ def wrapper():
         list_csv(csv_path, accessions_path)
         logger.info(f"Success! Accession list created at {accessions_path}")
     except Exception as e:
-        logger.critical(f"Error creating accession list at {accessions_path}: {e}, exc_info=True")
+        logger.critical(f"Error creating accession list at {accessions_path}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -775,7 +775,7 @@ def wrapper():
         extract_contigs(blastdb_path, accessions_path, contigs_path)
         logger.info(f"Success! Contigs extracted to {contigs_path}")
     except Exception as e:
-        logger.critical(f"Error extracting contigs to {contigs_path}: {e}, exc_info=True")
+        logger.critical(f"Error extracting contigs to {contigs_path}: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
@@ -786,7 +786,7 @@ def wrapper():
         find_CRISPRs(script_path, contigs_path, results_path)
         logger.info(f"Success! CRISPRFinder output created at {results_path}")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error searching for DRs: {e}, exc_info=True")
+        logger.critical(f"Error searching for DRs: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
