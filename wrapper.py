@@ -329,19 +329,14 @@ def read_csv(csvfile):
                 f.seek(0)  # ...so we need to move back to start
                 ID_finder = csv.reader(f)  # reset generator
                 for line in ID_finder:
-                    output_list.append(line[0])  # make list of IDs
+                    if line[0] not in output_list:  # avoids duplicates created by blast
+                        output_list.append(line[0])  # make list of IDs
                 return output_list
 
         except csv.Error as e:
             logger.critical(f"Error gathering accession data for {csvfile}, line {ID_finder.line_num}: {e}", exc_info=True)
             texter.send_text(f"Failed {name}")
             sys.exit()
-
-        finally:
-            if len(output_list) != linecount:
-                logger.critical("Error: initial and final line counts do not match! Exiting")
-                texter.send_text(f"Failed {name}")
-                sys.exit()
 
 
 def list_csv(csvfile, accessions):
