@@ -55,7 +55,7 @@ def winnow(path, out):
     # df = df[df.pident.astype(float) != 100]  # discard perfect hits
 
     # group rows by source id, sorted by % identity and crispr 'confidence'
-    df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True]).groupby('extracted_header', as_index=False).reset_index(drop=True)
+    df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True])
 
     with open(out, 'w') as f:
         df.to_csv(f, mode='w', index=False, header=True)
