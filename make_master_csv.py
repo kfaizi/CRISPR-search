@@ -25,7 +25,7 @@ def vertical_stack():
              'J',
              'L',
              'M',
-             'N'
+             'N',
              ]
 
     summary = None
@@ -49,19 +49,15 @@ def vertical_stack():
 
 def winnow(path, out):
     df = pd.read_csv(path, dtype=object, index_col=False)
-    df = df.astype({'pident': float})
-
-    df = df[df.protein_length.astype(int) > 500]  # discard proteins < 500 aa
-    # df = df[df.distance_protein_and_array.astype(float) < 20000] # discard proteins outside 20kb flanking sequence
     df = df[df.DR_found == 'yes']  # discard hits w/o crisprs
-    # df = df[df.pident != 100]  # discard perfect hits
+    df = df[df.protein_length.astype(int) > 500]  # discard proteins < 500 aa
+    df = df[df.distance_protein_and_array.astype(float) < 20000] # discard proteins outside 20kb flanking sequence
+    # df = df[df.pident.astype(float) != 100]  # discard perfect hits
 
     # group rows by source id, sorted by % identity and crispr 'confidence'
-    df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True]).groupby('extracted_header', as_index=False).head(2).reset_index(drop=True)
+    df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True]).groupby('extracted_header', as_index=False).reset_index(drop=True)
 
     with open(out, 'w') as f:
         df.to_csv(f, mode='w', index=False, header=True)
 
-# winnow(Path("/mnt/md0/kfaizi/search/master.csv"), Path("/mnt/md0/kfaizi/search/final.csv"))
-
-# vertical_stack()
+winnow(Path("/mnt/md0/kfaizi/search/master.csv"), Path("/mnt/md0/kfaizi/search/final.csv"))
