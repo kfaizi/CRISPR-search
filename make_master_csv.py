@@ -57,7 +57,23 @@ def winnow(path, out):
     # group rows by source id, sorted by % identity and crispr 'confidence'
     df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True])
 
+    # keep only the best match (by identity) for each hit
+    # df2 = df.groupby('extracted_header', as_index=False).head(1).reset_index(drop=True)
+    df2 = df.groupby('extracted_header', as_index=False).head(1)
+
     with open(out, 'w') as f:
         df.to_csv(f, mode='w', index=False, header=True)
 
-winnow(Path("/mnt/md0/kfaizi/search/master.csv"), Path("/mnt/md0/kfaizi/search/final.csv"))
+def other_winnow(path, out):
+    df = pd.read_csv(path, dtype=object, index_col=False)
+    df = df.astype({'pident': float})
+
+    # group rows by source id, sorted by % identity and crispr 'confidence'; keep only the best match (by identity) for each hit
+    df = df.sort_values(['extracted_header', 'crispr_id', 'pident'], ascending=[True, True, False]).groupby('extracted_header', as_index=False).head(1)
+
+    #.reset_index(drop=True)
+
+    with open(out, 'w') as f:
+        df.to_csv(f, mode='w', index=False, header=True)
+
+other_winnow(Path('/Users/kianfaizi/Desktop/orthologs-final.csv'), Path('/Users/kianfaizi/Desktop/orthologs-final-best.csv'))
