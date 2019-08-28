@@ -57,7 +57,7 @@ greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", r
 
 ######################## for interactivity, use: ###########################
 hello = greeter.parse_args()
-# python wcopy.py -in 'C' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '6'
+# python wcopy.py -in 'Q' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '8'
 
 ######################## for hardcoded testing, use: ########################
 # hello = greeter.parse_args(['-i', 'C',
@@ -224,11 +224,11 @@ def dedupe_raw(cat, int_cleaned, cleaned, removed):
                     head = next(lines)
                 else:
                     seq = ''.join(lines)
-                if head not in seqids:
-                    seqids.add(head)
-                    outfile.write(f"{head}{seq}")
-                elif head in seqids:
-                    logger.info(f"Exact duplicate removed: {head}")
+                    if head not in seqids:
+                        seqids.add(head)
+                        outfile.write(f"{head}{seq}")
+                    elif head in seqids:
+                        logger.info(f"Exact duplicate removed: {head}")
 
     # now this should deal with cases of same accession, different header
     record = SeqIO.index(str(int_cleaned), 'fasta')
@@ -687,23 +687,23 @@ def wrapper():
         texter.send_text(f"Failed copy {name}")
         sys.exit()
 
-    try:  # unzip fastas
-        logger.info(f"Extracting zipped fastas {hello.input_name}...")
-        unzip_fasta(gz_extractor_path, zip_path, genomes_path)
-        logger.info(f"Success! Unzipped fastas to {genomes_path}")
-    except subprocess.CalledProcessError as e:
-        logger.critical(f"Error extracting zipped fastas: {e}", exc_info=True)
-        texter.send_text(f"Failed extract {name}")
-        sys.exit()
+    # try:  # unzip fastas
+    #     logger.info(f"Extracting zipped fastas {hello.input_name}...")
+    #     unzip_fasta(gz_extractor_path, zip_path, genomes_path)
+    #     logger.info(f"Success! Unzipped fastas to {genomes_path}")
+    # except subprocess.CalledProcessError as e:
+    #     logger.critical(f"Error extracting zipped fastas: {e}", exc_info=True)
+    #     texter.send_text(f"Failed extract {name}")
+    #     sys.exit()
 
-    try:  # combine fastas and make space
-        logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
-        cat_and_cut(genomes_path, genome_path)
-        logger.info(f"Success! New file created at {genome_path}")
-    except subprocess.CalledProcessError as e:
-        logger.critical(f"Error combining and/or deleting fastas: {e}", exc_info=True)
-        texter.send_text(f"Failed concat {name}")
-        sys.exit()
+    # try:  # combine fastas and make space
+    #     logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
+    #     cat_and_cut(genomes_path, genome_path)
+    #     logger.info(f"Success! New file created at {genome_path}")
+    # except subprocess.CalledProcessError as e:
+    #     logger.critical(f"Error combining and/or deleting fastas: {e}", exc_info=True)
+    #     texter.send_text(f"Failed concat {name}")
+    #     sys.exit()
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path}...")
