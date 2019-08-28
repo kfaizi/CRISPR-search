@@ -28,6 +28,7 @@ import texter
 import signal
 
 from pathlib import Path
+from itertools import groupby
 from Bio import SeqIO
 
 # in working directory with CF + query, create blastdb/ and genomes/.
@@ -103,6 +104,7 @@ output_path.mkdir(parents=True, exist_ok=True)  # make dirs incl parent
 script_path = Path(output_path, hello.script)
 
 genome_path = Path(genomes_path, name).with_suffix(".fa")
+int_cleaned_path = Path(genomes_path, name + "_int_cleaned").with_suffix(".fa")
 cleaned_path = Path(genomes_path, name + "_cleaned").with_suffix(".fa")
 removed_path = Path(genomes_path, name + "_removed").with_suffix(".fa")
 
@@ -200,18 +202,36 @@ def cat_and_cut(lone, grouped):
                        check=True)
         logger.info("Done.")
     except subprocess.CalledProcessError as e:
-        logger.critical(f"Error removing redundant individual files: {e}", exc_info=True)
+        logger.critical(f"Error removing individual files: {e}", exc_info=True)
         texter.send_text(f"Failed {name}")
         sys.exit()
 
 
-def dedupe_raw(cat, cleaned, removed):
+def dedupe_raw(cat, int_cleaned, cleaned, removed):
     """Dedupe fasta by sequence id."""
     cleaned_accs = {}
     removed_accs = {}
     skipcount = 0
 
-    record = SeqIO.index(str(cat), 'fasta')
+    # looks for exact header duplicates and removes them. Needed for NCBI-Q
+    # adapted from https://www.biostars.org/p/3003/
+    seqids = set()
+    with open(cat, 'r') as infile:
+        with open(int_cleaned, 'w+') as outfile:
+            head = None
+            for h, lines in groupby(infile, lambda x: x.startswith('>')):
+                if h is True:
+                    head = next(lines)
+                else:
+                    seq = ''.join(lines)
+                if head not in seqids:
+                    seqids.add(head)
+                    outfile.write(f"{head}{seq}")
+                elif head in seqids:
+                    logger.info(f"Exact duplicate removed: {head}")
+
+    # now this should deal with cases of same accession, different header
+    record = SeqIO.index(str(int_cleaned), 'fasta')
     logger.info(f"There are {len(record)} sequences to dedupe...")
 
     for idx in record:
@@ -687,7 +707,7 @@ def wrapper():
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path}...")
-        num_saved, num_removed = dedupe_raw(genome_path, cleaned_path, removed_path)
+        num_saved, num_removed = dedupe_raw(genome_path, int_cleaned_path, cleaned_path, removed_path)
         logger.info(f"Success! Cleaned fasta created at {cleaned_path}. There were {num_saved} unique sequences with {num_removed} duplicates, moved to {removed_path}")
     except Exception as e:
         logger.critical(f"Error deduping: {e}", exc_info=True)
