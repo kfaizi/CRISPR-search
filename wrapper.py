@@ -57,7 +57,7 @@ greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", r
 
 ######################## for interactivity, use: ###########################
 hello = greeter.parse_args()
-# python wcopy.py -in 'Q' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '8'
+# python wcopy.py -in 'O' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '8'
 
 ######################## for hardcoded testing, use: ########################
 # hello = greeter.parse_args(['-i', 'C',
@@ -211,6 +211,7 @@ def dedupe_raw(cat, int_cleaned, cleaned, removed):
     """Dedupe fasta by sequence id."""
     cleaned_accs = {}
     removed_accs = {}
+    headcount = 0
     skipcount = 0
 
     # looks for exact header duplicates and removes them. Needed for NCBI-Q
@@ -228,8 +229,9 @@ def dedupe_raw(cat, int_cleaned, cleaned, removed):
                         seqids.add(head)
                         outfile.write(f"{head}{seq}")
                     elif head in seqids:
-                        logger.info(f"Exact duplicate removed: {head}")
+                        headcount += 1
 
+    logger.info(f"There were {headcount} exact header duplicates removed")
     # now this should deal with cases of same accession, different header
     record = SeqIO.index(str(int_cleaned), 'fasta')
     logger.info(f"There are {len(record)} sequences to dedupe...")
@@ -259,7 +261,7 @@ def dedupe_raw(cat, int_cleaned, cleaned, removed):
             SeqIO.write(record[ids], cleanfile, 'fasta')  # new deduped fasta
 
         if skipcount >= 1:
-            logger.warning(f"Warning! Skipped {skipcount} sequences.")
+            logger.warning(f"Warning! Skipped {skipcount} sequences, by accession.")
 
     with open(removed, 'w+') as remfile:
         for ids in removed_accs.values():
@@ -696,14 +698,14 @@ def wrapper():
     #     texter.send_text(f"Failed extract {name}")
     #     sys.exit()
 
-    # try:  # combine fastas and make space
-    #     logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
-    #     cat_and_cut(genomes_path, genome_path)
-    #     logger.info(f"Success! New file created at {genome_path}")
-    # except subprocess.CalledProcessError as e:
-    #     logger.critical(f"Error combining and/or deleting fastas: {e}", exc_info=True)
-    #     texter.send_text(f"Failed concat {name}")
-    #     sys.exit()
+    try:  # combine fastas and make space
+        logger.info(f"Concatenating fastas at {genomes_path} and cleaning up...")
+        cat_and_cut(genomes_path, genome_path)
+        logger.info(f"Success! New file created at {genome_path}")
+    except subprocess.CalledProcessError as e:
+        logger.critical(f"Error combining and/or deleting fastas: {e}", exc_info=True)
+        texter.send_text(f"Failed concat {name}")
+        sys.exit()
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path}...")
