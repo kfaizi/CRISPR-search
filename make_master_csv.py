@@ -4,7 +4,6 @@ import pandas as pd
 from pathlib import Path
 
 def vertical_stack():
-
     outdir = Path("/mnt/md0/kfaizi/search/output/")
     NCBI_datestamp = "_jul25"
     final = Path("/mnt/md0/kfaizi/search/master.csv")
@@ -19,15 +18,18 @@ def vertical_stack():
              'B',
              'C',
              'CAA',
-             'R',
-             'V',
+             'CAB',
              'F',
              'J',
              'L',
              'M',
              'N',
+             'O',
+             'Q',
+             'R',
+             'V',
              ]
-
+# left: P, S, U
     summary = None
 
     for name in names:
@@ -76,4 +78,6 @@ def other_winnow(path, out):
     with open(out, 'w') as f:
         df.to_csv(f, mode='w', index=False, header=True)
 
-other_winnow(Path('/Users/kianfaizi/Desktop/orthologs-final.csv'), Path('/Users/kianfaizi/Desktop/orthologs-final-best.csv'))
+
+vertical_stack()
+# other_winnow(Path('/Users/kianfaizi/Desktop/sep5_all_orthologs.csv'), Path('/Users/kianfaizi/Desktop/sep5_best_orthologs.csv'))
