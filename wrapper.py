@@ -41,7 +41,7 @@ greeter = argparse.ArgumentParser(
     TBLASTN, and searches those hits for DRs with CRISPRFinder. Results are
     tabulated in a CSV file.''')
 
-greeter.add_argument("-in", "--input_name", help="Name/identifier of the input file.", required=True)
+greeter.add_argument("-in", "--input_name", help="Name/identifier of the input file.", required=True) # handle for naming all output files
 
 greeter.add_argument("-wdir", "--working_dir", help="Path to working directory.", required=True)
 
@@ -104,9 +104,9 @@ output_path.mkdir(parents=True, exist_ok=True)  # make dirs incl parent
 script_path = Path(output_path, hello.script)
 
 genome_path = Path(genomes_path, name).with_suffix(".fa")
-int_cleaned_path = Path(genomes_path, name + "_int_cleaned").with_suffix(".fa")
-cleaned_path = Path(genomes_path, name + "_cleaned").with_suffix(".fa")
-removed_path = Path(genomes_path, name + "_removed").with_suffix(".fa")
+int_cleaned_path = Path(genomes_path, name + "_int_cleaned").with_suffix(".fa")  # after prelim dedupe
+cleaned_path = Path(genomes_path, name + "_cleaned").with_suffix(".fa")  # after final dedupe
+removed_path = Path(genomes_path, name + "_removed").with_suffix(".fa")  # removed during final dedupe
 
 archive_name = name + "_archive"
 archive_path = Path(output_path, archive_name)
