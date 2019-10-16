@@ -1,7 +1,7 @@
 # make master csv (concatenate all summaries)
-
 import pandas as pd
 from pathlib import Path
+
 
 def vertical_stack():
     outdir = Path("/mnt/md0/kfaizi/search/output/")
@@ -60,29 +60,17 @@ def winnow(path, out_csv, out_fasta):
     # df = df[df.pident.astype(float) != 100]  # discard perfect hits
 
     # group rows by source id, sorted by % identity and crispr 'confidence', keeping only best
-    df = df.sort_values(['extracted_header', 'crispr_id', 'pident', 'crispr_type'], ascending=[True, True, False, True]).groupby('extracted_header', as_index=False).head(1)
+    df = df.sort_values(['extracted_header', 'pident', 'crispr_type'], ascending=[True, False, True]).groupby('extracted_header', as_index=False).head(1)
 
-    # keep only the best match (by identity) for each hit
-    # df2 = df.groupby('extracted_header', as_index=False).head(1).reset_index(drop=True)
-
-    # with open(out_csv, 'w') as f:
-    #     df.to_csv(f, mode='w', index=False, header=True)
+    # write filtered dataframe to new csv
+    with open(out_csv, 'w') as f:
+        df.to_csv(f, mode='w', index=False, header=True)
 
     # write filtered proteins to a fasta file
     with open(out_fasta, 'w') as f:
         for row in df.itertuples():
             f.write(">" + row.extracted_header + "\n")
             f.write(row.protein_sequence + "\n")
-
-
-def other_winnow(path, out):  # doesn't filter...
-    df = pd.read_csv(path, dtype=object, index_col=False)
-    df = df.astype({'pident': float})
-    # group rows by source id; keep only best match (by identity, with CRISPR) for each contig.
-    df = df.sort_values(['extracted_header', 'crispr_id', 'pident'], ascending=[True, True, False]).groupby('extracted_header', as_index=False).head(1)
-    #.reset_index(drop=True)
-    with open(out, 'w') as f:
-        df.to_csv(f, mode='w', index=False, header=True)
 
 
 vertical_stack()
