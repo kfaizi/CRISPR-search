@@ -53,13 +53,13 @@ greeter.add_argument("-t", "--threads", help="Number of threads for TBLASTN.", r
 
 ######################## for interactivity, use: ###########################
 hello = greeter.parse_args()
-# python wcopy.py -in 'O' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/gigadb/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '8'
+# python wcopy.py -in 'O' -wdir '~/search/' -bdir '~/search/blastdb/' -gdir '~/search/genomes/' -q 'Cas13d_proteins.fa' -s 'cf_v2.pl' -t '8'
 
 ######################## for hardcoded testing, use: ########################
 # hello = greeter.parse_args(['-i', 'C',
 #                             '-w', '~/search/',  # use pathlib to avoid / errors
 #                             '-b', '~/search/blastdb/',  # use pathlib to avoid / errors
-#                             '-g', '~/search/genomes/gigadb/',
+#                             '-g', '~/search/genomes/',
 #                             '-q', 'Cas13d_proteins.fa',
 #                             '-s', 'cf_v2.pl',
 #                             '-t', '4'])
@@ -179,12 +179,15 @@ def cat_and_cut(lone, grouped):
     with open(grouped, "w") as outfile:  # genome_path
         try:  # create master file...
             numfiles = str(len(cat_list))
-            logger.info(f"There are {numfiles} files to merge...")
-            subprocess.run(combine,
-                           cwd="/",
-                           stdout=outfile,
-                           check=True)
-            logger.info("Done.")
+            if numfiles == 0:
+                sys.exit()
+            else:
+                logger.info(f"There are {numfiles} files to merge...")
+                subprocess.run(combine,
+                               cwd="/",
+                               stdout=outfile,
+                               check=True)
+                logger.info("Done.")
         except subprocess.CalledProcessError as e:
             logger.critical(f"Error combining files: {e}", exc_info=True)
             texter.send_text(f"Failed {name}")
@@ -638,7 +641,6 @@ def wrapper():
     try:  # unzip fastas
         logger.info(f"Extracting zipped fastas {hello.input_name}...")
         unzip_fasta(gz_extractor_path, zip_path, genomes_path)
-        logger.info(f"Success! Unzipped fastas to {genomes_path}")
     except subprocess.CalledProcessError as e:
         logger.critical(f"Error extracting zipped fastas: {e}", exc_info=True)
         texter.send_text(f"Failed extract {name}")
