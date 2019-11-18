@@ -85,7 +85,7 @@ genomes_dir = Path(hello.genomes_dir).expanduser()
 blastdb_dir = Path(hello.blastdb_dir).expanduser()
 
 # Constants
-#name = hello.input_name + "_" + NCBI_datestamp
+# name = hello.input_name + "_" + NCBI_datestamp
 name = hello.input_name + "_" + gigadb_datestamp
 logname = "log_" + name + ".log"
 
@@ -205,33 +205,42 @@ def cat_and_cut(lone, grouped):
         logger.warning(f"Error removing individual files: {e}", exc_info=True)
 
 
-def dedupe_raw(cat, cleaned, removed):
-    """Dedupe fastas. Duplicate headers or ids will break the pipeline."""
-    # looks for exact header duplicates and removes them. e.g. for NCBI 'Q'
+def dedupe(cat, cleaned, removed):
+    """Remove sequences with duplicate seqids (they break blastdb creation)."""
     # adapted from https://www.biostars.org/p/3003/
-    headcount = 0
-    headers = set()
+    dupecount = 0  # number of duplicates found
+    seqids = set()
     dupes = {}
+
     with open(cat, 'r') as infile:
         with open(cleaned, 'w+') as outfile:
             head = None
+            seqid = None
             for h, lines in groupby(infile, lambda x: x.startswith('>')):
                 if h is True:  # found a header line
-                    head = next(lines).replace(' ', '_')
+                    head = next(lines)
+                    seqid = head.split()[0]  # split header to get seqid (>...)
                 else:
                     seq = ''.join(lines)
-                    if head not in headers:
-                        headers.add(head)
+                    # first, check if NCBI format
+                    if "dbj|" in seqid:
+                        acc_start = seqid.find("dbj|")
+                        acc_end = seqid.find(" ")
+                        seqid = seqid[acc_start+4:acc_end]  # isolate accession
+                    # now deduplicate
+                    if seqid not in seqids:
+                        seqids.add(seqid)
                         outfile.write(f"{head}{seq}")
-                    elif head in headers:
-                        headcount += 1
+                    elif seqid in seqids:
+                        dupecount += 1
                         dupes[head] = seq
 
     with open(removed, 'w+') as remfile:  # store duplicates for inspection
-        for head, seq in dupes:
+        for head, seq in dupes.items():
             remfile.write(f"{head}{seq}")
 
-    return headcount
+    return dupecount
+
 
 def make_db(fasta, db):
     """Concatenated fasta > parsed blastdb."""
@@ -657,7 +666,7 @@ def wrapper():
 
     try:  # deduplicating the raw data
         logger.info(f"Deduplicating sequences in {genome_path} by header...")
-        num_removed = dedupe_raw(genome_path, cleaned_path, removed_path)
+        num_removed = dedupe(genome_path, cleaned_path, removed_path)
         logger.info(f"Success! Cleaned fasta created at {cleaned_path}. Moved {num_removed} duplicates to {removed_path}")
     except Exception as e:
         logger.critical(f"Error deduping: {e}", exc_info=True)
