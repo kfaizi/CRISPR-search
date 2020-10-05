@@ -1,4 +1,4 @@
-# cellophane (needs real name)
-a lightweight, semitransparent wrapper (lol) for identifying Cas protein orthologs in prokaryotic sequence data, using BLAST+ and CRISPRFinder
+# Mining metagenomes for new CRISPR effectors
+pipeline for identifying novel orthologs of CRISPR-Cas effectors from publicly available metagenome data, using BLAST+ and CRISPRFinder
 
-Documentation incoming:
+developed during my summer 2019 research in the Hsu Lab at the Salk Institute
