@@ -56,9 +56,8 @@ def winnow(path, out_csv, out_fasta):
     df = df[df.DR_found == 'yes']  # discard hits w/o crisprs
     df = df[df.protein_length.astype(int) > 500]  # discard proteins < 500 aa
     df = df[df.distance_protein_and_array.astype(float) < 20000]  # discard proteins outside 20kb flanking sequence
-    df = df.astype({'pident': float})
-    # df = df[df.pident.astype(float) != 100]  # discard perfect hits
-
+    df = df[df.pident.astype(float) < 90]  # discard most similar hits
+###### NEED TO FIX FILTERS > NOT STRINGENT ENOUGH > STILL GETTING 1000s OF HITS
     # group rows by source id, sorted by % identity and crispr 'confidence', keeping only best
     df = df.sort_values(['extracted_header', 'pident', 'crispr_type'], ascending=[True, False, True]).groupby('extracted_header', as_index=False).head(1)
 
@@ -73,5 +72,16 @@ def winnow(path, out_csv, out_fasta):
             f.write(row.protein_sequence + "\n")
 
 
-vertical_stack()
-winnow(Path("/mnt/md0/kfaizi/search/master.csv"), Path('/mnt/md0/kfaizi/search/filter_master.csv'),  Path('/mnt/md0/kfaizi/search/filter_proteins.fasta'))
+# vertical_stack()
+# winnow(Path("/mnt/md0/kfaizi/search/master.csv"), Path('/mnt/md0/kfaizi/search/filter_master.csv'),  Path('/mnt/md0/kfaizi/search/filter_proteins.fasta'))
+
+
+def fix(path, out_fasta):
+    df = pd.read_csv(path, dtype=object, index_col=False)
+
+    with open(out_fasta, 'w') as f:
+        for row in df.itertuples():
+            f.write(">" + row.extracted_header + "\n")
+            f.write(row.protein_sequence + "\n")
+
+fix(Path("/Users/kianfaizi/Desktop/best_test.csv"), Path("/Users/kianfaizi/Desktop/best_prots.fasta"))

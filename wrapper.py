@@ -158,7 +158,7 @@ def move_script(script, copy):
 
 
 def unzip_fasta(gz_extractor, zipped, unzipped):
-    """(G)unzip compressed fasta files."""
+    """(G)unzip any compressed fasta files."""
     subprocess.run(["bash",
                     f"{gz_extractor}",
                     f"{zipped}",
@@ -168,16 +168,16 @@ def unzip_fasta(gz_extractor, zipped, unzipped):
 
 
 def cat_and_cut(lone, grouped):
-    """Concatenate unzipped fastas, delete source."""
+    """Concatenate fastas, deleting the individual files."""
     cat_list = []
 
-    for fa in sorted(lone.glob("*")):  # genomes_path. better way to do this?
+    for fa in sorted(lone.glob("*")):  # cat all the decompressed files
         cat_list.append(fa)
 
     combine = (['cat'] + cat_list)
 
     with open(grouped, "w") as outfile:  # genome_path
-        try:  # create master file...
+        try:  # create master file
             numfiles = str(len(cat_list))
             if numfiles == 0:
                 sys.exit()
@@ -193,10 +193,9 @@ def cat_and_cut(lone, grouped):
             texter.send_text(f"Failed {name}")
             sys.exit()
 
-    remove = (['rm'] + cat_list)
-
-    try:  # then delete the individual files
+    try:  # delete the individual files
         logger.info("Removing the individual files...")
+        remove = (['rm'] + cat_list)
         subprocess.run(remove,
                        cwd='/',
                        check=True)
@@ -664,8 +663,8 @@ def wrapper():
         texter.send_text(f"Failed concat {name}")
         sys.exit()
 
-    try:  # deduplicating the raw data
-        logger.info(f"Deduplicating sequences in {genome_path} by header...")
+    try:  # deduplicate seqs by seqid
+        logger.info(f"Deduplicating sequences in {genome_path} by seqid...")
         num_removed = dedupe(genome_path, cleaned_path, removed_path)
         logger.info(f"Success! Cleaned fasta created at {cleaned_path}. Moved {num_removed} duplicates to {removed_path}")
     except Exception as e:
